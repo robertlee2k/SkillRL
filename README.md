@@ -26,7 +26,7 @@ SkillRL is a framework that enables LLM agents to learn high-level, reusable beh
 
 - **Recursive Skill Evolution**: A dynamic mechanism where the skill library co-evolves with the agent's policy during RL by analyzing validation failures.
 
-- **Context Efficiency**: Achieves 10-20x token compression compared to raw trajectory storage while enhancing reasoning utility. 
+- **Context Efficiency**: Achieves 10-20% token compression compared to raw trajectory storage while enhancing reasoning utility. 
 
 ## 🚀 Getting Started (Coming Soon)
 
