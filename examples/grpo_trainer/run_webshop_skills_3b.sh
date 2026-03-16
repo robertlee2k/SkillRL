@@ -19,7 +19,7 @@ export RAY_INIT_KWARGS='{"_system_config": {"object_spilling_config": "{\"type\"
 # 2. 模型、数据与 WandB 配置 (请填入你的信息)
 # ==========================================
 # 指向你在本地下载好的 Qwen2.5-7B 模型目录
-export MODEL_PATH="/home/bo.li/data/models/Qwen2.5-7B-Instruct"
+export MODEL_PATH="/home/bo.li/data/models/Qwen2.5-3B-Instruct"
 # 指向你在本地下载好的 Embedding 模型目录
 export EMBEDDING_PATH="/home/bo.li/data/models/bge-small-en-v1.5"
 
@@ -99,12 +99,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger=['console','tensorboard'] \
     trainer.project_name='verl_agent_webshop' \
-    trainer.experiment_name='grpo_qwen2.5_7b_skills_dynamic' \
+    trainer.experiment_name='grpo_qwen2.5_3b_skills_dynamic' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=50 \
+    trainer.save_freq=20 \
     trainer.test_freq=5 \
     +trainer.val_freq=10 \
-    trainer.total_epochs=150 \
+    trainer.total_epochs=50 \
     trainer.val_before_train=True \
-    trainer.default_local_dir=/home/bo.li/data/SkillRL/checkpoints/verl_agent_webshop/grpo_qwen2.5_7b_skills_dynamic "$@"
+    trainer.default_local_dir=/home/bo.li/data/SkillRL/checkpoints/verl_agent_webshop/grpo_qwen2.5_3b_skills_dynamic "$@"

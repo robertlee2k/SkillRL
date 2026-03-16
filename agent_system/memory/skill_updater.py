@@ -12,6 +12,7 @@ import os
 import re
 from typing import List, Dict, Any, Optional
 from openai import AzureOpenAI
+from openai import OpenAI
 
 
 class SkillUpdater:
@@ -20,46 +21,47 @@ class SkillUpdater:
         max_new_skills_per_update: int = 3,
         max_completion_tokens: int = 2048,
     ):
-        # Read credentials from environment variables — never hardcode secrets.
-        api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
+        # # Read credentials from environment variables — never hardcode secrets.
+        # api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+        # endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        # api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
+        #
+        # if not api_key or not endpoint:
+        #     raise EnvironmentError(
+        #         "SkillUpdater requires AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT "
+        #         "environment variables to be set."
+        #     )
+        #
+        # self.client = AzureOpenAI(
+        #     api_key=api_key,
+        #     azure_endpoint=endpoint,
+        #     api_version=api_version,
+        # )
+        # self.model = "o3"
 
-        if not api_key or not endpoint:
-            raise EnvironmentError(
-                "SkillUpdater requires AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT "
-                "environment variables to be set."
-            )
+        # 1. 火山引擎 Doubao 初始化
+        api_key = os.getenv('VOLC_API_KEY')
+        if not api_key:
+            raise ValueError("[SkillUpdate] 严重错误: 找不到火山云 VOLC_API_KEY 环境变量！")
 
-        self.client = AzureOpenAI(
+        self.client = OpenAI(
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
             api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=api_version,
         )
-        self.model = "o3"
+        # 豆包目前最强模型接入点
+        self.model = "doubao-seed-2-0-pro-260215"
+
         self.max_completion_tokens = max_completion_tokens
         self.max_new_skills_per_update = max_new_skills_per_update
         self.update_history = []
 
     def analyze_failures(
-        self,
-        failed_trajectories: List[Dict],
-        current_skills: Dict,
+            self,
+            failed_trajectories: List[Dict],
+            current_skills: Dict,
     ) -> List[Dict]:
         """
         Analyse failed trajectories and generate new skills to address the gaps.
-
-        Args:
-            failed_trajectories: List of dicts with keys:
-                ``task``       – task description string
-                ``trajectory`` – list of ``{action, observation}`` step dicts
-                ``task_type``  – detected task category string
-            current_skills: The current skill bank dict (with keys
-                ``general_skills``, ``task_specific_skills``, etc.)
-
-        Returns:
-            List of new skill dicts ready to be passed to
-            ``SkillsOnlyMemory.add_skills()``.
         """
         if not failed_trajectories:
             return []
@@ -73,10 +75,13 @@ class SkillUpdater:
         )
 
         try:
+            # 调用兼容 OpenAI 的客户端，传递给豆包
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=self.max_completion_tokens,
+                # 【关键修复】：将 o3 专属的 max_completion_tokens 降级为行业标准的 max_tokens
+                # 否则火山引擎的 API 网关极大概率会报错拦截
+                max_tokens=getattr(self, 'max_completion_tokens', 2048),
             )
             raw_skills = self._parse_skills_response(response.choices[0].message.content)
 
@@ -93,8 +98,63 @@ class SkillUpdater:
             return reassigned[:self.max_new_skills_per_update]
 
         except Exception as e:
-            print(f"[SkillUpdater] Error calling o3: {e}")
+            # 打印日志替换为 Doubao，方便排查追踪
+            print(f"[SkillUpdater] Error calling Doubao Seed 2.0 Pro: {e}")
             return []
+    # def analyze_failures(
+    #     self,
+    #     failed_trajectories: List[Dict],
+    #     current_skills: Dict,
+    # ) -> List[Dict]:
+    #     """
+    #     Analyse failed trajectories and generate new skills to address the gaps.
+    #
+    #     Args:
+    #         failed_trajectories: List of dicts with keys:
+    #             ``task``       – task description string
+    #             ``trajectory`` – list of ``{action, observation}`` step dicts
+    #             ``task_type``  – detected task category string
+    #         current_skills: The current skill bank dict (with keys
+    #             ``general_skills``, ``task_specific_skills``, etc.)
+    #
+    #     Returns:
+    #         List of new skill dicts ready to be passed to
+    #         ``SkillsOnlyMemory.add_skills()``.
+    #     """
+    #     if not failed_trajectories:
+    #         return []
+    #
+    #     # Compute the next available dyn_ index BEFORE calling the LLM so we
+    #     # can tell it which IDs to use, avoiding duplicate-ID collisions.
+    #     next_dyn_idx = self._next_dyn_index(current_skills)
+    #
+    #     prompt = self._build_analysis_prompt(
+    #         failed_trajectories, current_skills, next_dyn_idx
+    #     )
+    #
+    #     try:
+    #         response = self.client.chat.completions.create(
+    #             model=self.model,
+    #             messages=[{"role": "user", "content": prompt}],
+    #             max_completion_tokens=self.max_completion_tokens,
+    #         )
+    #         raw_skills = self._parse_skills_response(response.choices[0].message.content)
+    #
+    #         # Reassign dyn_ IDs on our side to guarantee no collisions,
+    #         # regardless of what the LLM returned.
+    #         reassigned = self._reassign_dyn_ids(raw_skills, next_dyn_idx)
+    #
+    #         self.update_history.append({
+    #             'num_failures_analyzed': len(failed_trajectories),
+    #             'num_skills_generated': len(reassigned),
+    #             'skill_ids': [s.get('skill_id') for s in reassigned],
+    #         })
+    #
+    #         return reassigned[:self.max_new_skills_per_update]
+    #
+    #     except Exception as e:
+    #         print(f"[SkillUpdater] Error calling o3: {e}")
+    #         return []
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #
