@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebShop RL Agent Arena 🏆</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 h-screen flex flex-col font-sans">
+
+    <header class="bg-gray-900 p-4 border-b border-gray-800 flex justify-between items-center z-10">
+        <div class="flex-1">
+            <h1 class="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">RL Agent Arena: 3B vs 7B</h1>
+            <p id="task-desc" class="text-green-400 mt-2 text-sm font-mono tracking-tight leading-relaxed max-w-4xl h-5 overflow-hidden text-ellipsis whitespace-nowrap">Waiting to connect and fetch task...</p>
+        </div>
+        <div class="flex items-center gap-4 bg-gray-800 p-2 rounded-xl border border-gray-700">
+            <label class="text-sm font-bold text-gray-400 uppercase">Batch Size</label>
+            <input type="number" id="num-tasks" value="20" min="1" max="500" class="w-20 bg-gray-900 text-white border border-gray-600 rounded-lg p-2 text-center font-black focus:outline-none focus:border-blue-500 transition">
+            <button id="start-btn" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-6 py-2 rounded-lg font-bold shadow-lg transition transform hover:scale-105">Launch Batch 🚀</button>
+        </div>
+    </header>
+
+    <div class="bg-gray-900 p-3 border-b border-gray-800 flex justify-between items-center shadow-md relative z-0">
+        <div class="flex-1 text-center">
+            <div class="text-gray-500 text-xs font-black uppercase tracking-widest">3B Success Rate</div>
+            <div id="sr-3B" class="text-3xl font-black text-cyan-400 mt-1 transition-all duration-300">0.0% <span class="text-sm font-medium text-cyan-800">(0/0)</span></div>
+        </div>
+        <div class="flex-1 text-center border-x border-gray-800 px-4">
+            <div class="text-gray-500 text-xs font-black uppercase tracking-widest">Evaluation Progress</div>
+            <div id="batch-progress" class="text-xl font-black text-white mt-2">Task 0 / 0</div>
+            <div class="w-full bg-gray-800 rounded-full h-1.5 mt-2">
+                <div id="progress-bar" class="bg-gradient-to-r from-green-400 to-blue-500 h-1.5 rounded-full" style="width: 0%"></div>
+            </div>
+        </div>
+        <div class="flex-1 text-center">
+            <div class="text-gray-500 text-xs font-black uppercase tracking-widest">7B Success Rate</div>
+            <div id="sr-7B" class="text-3xl font-black text-fuchsia-400 mt-1 transition-all duration-300">0.0% <span class="text-sm font-medium text-fuchsia-800">(0/0)</span></div>
+        </div>
+    </div>
+
+    <main class="flex-1 overflow-hidden grid grid-cols-2 gap-4 p-4">
+
+        <div class="flex flex-col bg-gray-900 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl">
+            <div class="bg-gray-800 p-2 text-center font-black text-cyan-400 uppercase tracking-widest text-sm">🤖 Qwen-2.5 3B</div>
+            <div class="flex-1 flex p-4 gap-4 overflow-hidden">
+                <div class="w-5/12 flex flex-col items-center">
+                    <div class="text-xs text-gray-500 font-bold mb-2 uppercase">Virtual Screen</div>
+                    <div id="screen-3B" class="w-full flex-1 bg-white text-gray-900 rounded-[2rem] border-[6px] border-gray-700 p-4 overflow-y-auto no-scrollbar shadow-inner relative text-sm font-sans transition-all">
+                    </div>
+                </div>
+                <div class="w-7/12 flex flex-col gap-3 overflow-y-auto no-scrollbar">
+                    <div class="text-xs text-gray-500 font-bold uppercase">RAG Skills 🎒</div>
+                    <div id="skills-3B" class="bg-gray-950 p-3 rounded-xl text-xs text-orange-400 font-mono border border-gray-800 h-24 overflow-y-auto"></div>
+                    <div class="text-xs text-gray-500 font-bold mt-1 uppercase">Thinking 🧠</div>
+                    <div id="think-3B" class="flex-1 bg-gray-950 p-3 rounded-xl text-sm text-gray-400 whitespace-pre-wrap overflow-y-auto border border-gray-800 italic leading-relaxed"></div>
+                    <div class="text-xs text-gray-500 font-bold mt-1 uppercase">Action ⚡</div>
+                    <div id="action-3B" class="bg-cyan-950 text-cyan-300 p-3 rounded-xl text-lg font-black border border-cyan-900 text-center uppercase tracking-wider shadow-inner"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col bg-gray-900 rounded-2xl overflow-hidden border border-gray-800 shadow-2xl">
+            <div class="bg-gray-800 p-2 text-center font-black text-fuchsia-400 uppercase tracking-widest text-sm">🤖 Qwen-2.5 7B</div>
+            <div class="flex-1 flex p-4 gap-4 overflow-hidden">
+                <div class="w-5/12 flex flex-col items-center">
+                    <div class="text-xs text-gray-500 font-bold mb-2 uppercase">Virtual Screen</div>
+                    <div id="screen-7B" class="w-full flex-1 bg-white text-gray-900 rounded-[2rem] border-[6px] border-gray-700 p-4 overflow-y-auto no-scrollbar shadow-inner relative text-sm font-sans transition-all">
+                    </div>
+                </div>
+                <div class="w-7/12 flex flex-col gap-3 overflow-y-auto no-scrollbar">
+                    <div class="text-xs text-gray-500 font-bold uppercase">RAG Skills 🎒</div>
+                    <div id="skills-7B" class="bg-gray-950 p-3 rounded-xl text-xs text-orange-400 font-mono border border-gray-800 h-24 overflow-y-auto"></div>
+                    <div class="text-xs text-gray-500 font-bold mt-1 uppercase">Thinking 🧠</div>
+                    <div id="think-7B" class="flex-1 bg-gray-950 p-3 rounded-xl text-sm text-gray-400 whitespace-pre-wrap overflow-y-auto border border-gray-800 italic leading-relaxed"></div>
+                    <div class="text-xs text-gray-500 font-bold mt-1 uppercase">Action ⚡</div>
+                    <div id="action-7B" class="bg-fuchsia-950 text-fuchsia-300 p-3 rounded-xl text-lg font-black border border-fuchsia-900 text-center uppercase tracking-wider shadow-inner"></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+<script>
+        let ws = null;
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            if (ws) ws.close();
+
+            const numTasks = document.getElementById('num-tasks').value;
+            document.getElementById('task-desc').innerHTML = `Initializing Batch Evaluation for ${numTasks} tasks...`;
+            document.getElementById('batch-progress').innerText = `Preparing Environments...`;
+            document.getElementById('progress-bar').style.width = '0%';
+
+            ['3B', '7B'].forEach(m => {
+                document.getElementById(`screen-${m}`).innerHTML = '<div class="flex h-full items-center justify-center text-gray-400 font-bold">Waking up Agent...</div>';
+                document.getElementById(`skills-${m}`).innerHTML = '';
+                document.getElementById(`think-${m}`).innerHTML = '';
+                document.getElementById(`action-${m}`).innerHTML = '';
+                document.getElementById(`sr-${m}`).innerHTML = `0.0% <span class="text-sm font-medium text-gray-600">(0/0)</span>`;
+            });
+
+            const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${ws_protocol}//${window.location.host}/ws/arena`);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ num_tasks: parseInt(numTasks) }));
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'task_start') {
+                    document.getElementById('task-desc').innerHTML = `<strong>🎯 Goal [Task ${data.current}]:</strong> ${data.task}`;
+                    document.getElementById('batch-progress').innerText = `Task ${data.current} / ${data.total}`;
+                    document.getElementById('progress-bar').style.width = `${((data.current - 1) / data.total) * 100}%`;
+
+                    ['3B', '7B'].forEach(m => {
+                        document.getElementById(`screen-${m}`).innerHTML = '';
+                        document.getElementById(`think-${m}`).innerHTML = '';
+                        document.getElementById(`action-${m}`).innerHTML = 'Waiting to act...';
+                    });
+                }
+                else if (data.type === 'state_update') {
+                    const skillsHtml = data.skills.map(s => `<div class="mb-1">⚡ ${s}</div>`).join('');
+                    document.getElementById(`skills-${data.model}`).innerHTML = skillsHtml || '<span class="text-gray-600 italic">No skills retrieved for this state.</span>';
+
+                    const screenHtml = data.screen_elements.map(item => {
+                        const lowerItem = item.toLowerCase();
+                        if (lowerItem.includes('price:')) return `<div class="bg-yellow-100 text-yellow-800 font-black p-2 my-1.5 rounded-lg border border-yellow-300 shadow-sm">💰 ${item}</div>`;
+                        if (['buy now', 'search', 'back to search', '< prev', 'next >'].includes(lowerItem) || item.startsWith('click[')) {
+                            return `<div class="bg-gradient-to-b from-blue-500 to-blue-600 text-white text-center py-2 px-4 my-1.5 rounded-xl font-black shadow-md cursor-pointer border border-blue-700 hover:from-blue-400 hover:to-blue-500">${item}</div>`;
+                        }
+                        if (item.includes('Instruction:')) return `<div class="bg-green-50 text-green-900 p-2 my-2 rounded-lg border border-green-200 text-xs font-bold leading-relaxed">📌 ${item}</div>`;
+                        return `<div class="py-1.5 border-b border-gray-100 text-gray-700">${item}</div>`;
+                    }).join('');
+
+                    const screenDiv = document.getElementById(`screen-${data.model}`);
+                    screenDiv.innerHTML = `<div class="text-center font-black text-gray-400 mb-3 border-b-2 border-gray-200 pb-2">STEP ${data.step}</div>` + screenHtml;
+                    screenDiv.scrollTop = screenDiv.scrollHeight;
+
+                    // 【修复点】：把外层的双引号换成了单引号！
+                    document.getElementById(`action-${data.model}`).innerHTML = '<i class="text-gray-500">Thinking... 🤔</i>';
+                    document.getElementById(`think-${data.model}`).innerHTML = "";
+                }
+                else if (data.type === 'model_action') {
+                    const thinkDiv = document.getElementById(`think-${data.model}`);
+                    thinkDiv.innerHTML = data.think;
+                    thinkDiv.scrollTop = thinkDiv.scrollHeight;
+                    document.getElementById(`action-${data.model}`).innerHTML = data.action;
+                }
+                else if (data.type === 'task_done') {
+                    const isSuccess = data.reward === 10.0;
+                    const statusHtml = isSuccess
+                        ? `<span class="text-green-400 mt-2 block text-2xl drop-shadow-md">🎉 SUCCESS (+1)</span>`
+                        : `<span class="text-red-400 mt-2 block text-2xl drop-shadow-md">❌ FAILED (0)</span>`;
+                    document.getElementById(`action-${data.model}`).innerHTML += `<br>${statusHtml}`;
+                }
+                else if (data.type === 'batch_progress') {
+                    const current = data.current;
+                    document.getElementById('progress-bar').style.width = `${(current / document.getElementById('num-tasks').value) * 100}%`;
+
+                    const calcSR = (score) => current > 0 ? ((score / current) * 100).toFixed(1) + '%' : '0.0%';
+
+                    document.getElementById('sr-3B').innerHTML = `${calcSR(data.score_3b)} <span class="text-sm font-medium text-cyan-800">(${data.score_3b}/${current})</span>`;
+                    document.getElementById('sr-7B').innerHTML = `${calcSR(data.score_7b)} <span class="text-sm font-medium text-fuchsia-800">(${data.score_7b}/${current})</span>`;
+                }
+            };
+        });
+    </script>
+</body>
+</html>
