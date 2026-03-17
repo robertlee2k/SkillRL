@@ -12,10 +12,23 @@ from agent_system.environments.env_manager import WebshopEnvironmentManager
 
 
 def extract_action(text: str) -> str:
+    """仅用于终端美观打印，不参与实际环境交互"""
     match = re.search(r'<action>(.*?)</action>', text, re.IGNORECASE | re.DOTALL)
     if match: return match.group(1).strip()
     fallback = re.search(r'(search\[.*?\]|click\[.*?\])', text, re.IGNORECASE)
     return fallback.group(1).strip() if fallback else "click[back to search]"
+
+
+def patch_step1_prompt(mgr, raw_prompt):
+    """【救命补丁】：修复原作者在 Step 1 漏掉 RAG 技能的致命 Bug"""
+    if mgr.retrieval_memory and mgr.retrieved_memories:
+        skills_text = mgr.retrieval_memory.format_for_prompt(mgr.retrieved_memories[0])
+        # 强行把检索到的技能插回 Prompt 肚子里
+        patch = f"\n\n## Retrieved Relevant Experience\n\n{skills_text}\n\n"
+        if "Your current observation is:" in raw_prompt:
+            parts = raw_prompt.split("Your current observation is:")
+            return parts[0] + patch + "Your current observation is:" + parts[1]
+    return raw_prompt
 
 
 def main():
@@ -35,19 +48,17 @@ def main():
     llm_3b = LLM(model=PATH_3B_MODEL, tensor_parallel_size=1, gpu_memory_utilization=0.4, trust_remote_code=True)
     llm_7b = LLM(model=PATH_7B_MODEL, tensor_parallel_size=1, gpu_memory_utilization=0.4, trust_remote_code=True)
 
-    # 【铁证修复】：严格采用训练真实 Eval 温度 0.4！
+    # 保持真实的 RL 探索温度 0.4，这是打破死锁的最后一道保险
     sampling_params = SamplingParams(temperature=0.4, top_p=0.9, max_tokens=768, stop=["<|im_end|>"])
 
     print("🚀 [3/4] 正在加载你最新的真实训练 Config...")
-    # 直接加载你 3月16日 最新的那次真实训练配置！
     REAL_CONFIG_PATH = "/home/bo.li/SkillRL/outputs/2026-03-16/22-09-25/.hydra/config.yaml"
     base_config = OmegaConf.load(REAL_CONFIG_PATH)
 
-    # 复制配置，仅覆盖技能库路径，确保 100% 还原训练环境
     config_3b = base_config.copy()
     config_3b.env.use_skills_only_memory = True
     config_3b.env.skills_only_memory.skills_json_path = PATH_3B_SKILL
-    config_3b.env.resources_per_worker = {'num_cpus': 1}  # 覆盖资源分配，防止单机环境起不来
+    config_3b.env.resources_per_worker = {'num_cpus': 1}
 
     config_7b = base_config.copy()
     config_7b.env.use_skills_only_memory = True
@@ -73,11 +84,12 @@ def main():
     print(f"🎯 原生竞技场目标任务: \033[92m{task_desc}\033[0m")
     print("=" * 80)
 
-    # 状态追踪器
-    # 这里的 obs 直接就是底层已经完美拼装好 WEBSHOP_TEMPLATE_WITH_MEMORY 的文本
+    # 状态追踪器 (应用了我们的 Step 1 补丁！)
     state = {
-        '3B': {'prompt_body': obs_dict_3b['text'][0], 'done': False, 'reward': 0.0, 'step': 1, 'color': '\033[96m'},
-        '7B': {'prompt_body': obs_dict_7b['text'][0], 'done': False, 'reward': 0.0, 'step': 1, 'color': '\033[95m'}
+        '3B': {'prompt_body': patch_step1_prompt(mgr_3b, obs_dict_3b['text'][0]), 'done': False, 'reward': 0.0,
+               'step': 1, 'color': '\033[96m'},
+        '7B': {'prompt_body': patch_step1_prompt(mgr_7b, obs_dict_7b['text'][0]), 'done': False, 'reward': 0.0,
+               'step': 1, 'color': '\033[95m'}
     }
 
     while not (state['3B']['done'] and state['7B']['done']):
@@ -87,11 +99,6 @@ def main():
 
             c = s['color']
 
-            if s['step'] == 1 and model_name == '3B':
-                print("\n" + "=" * 40 + " [上帝视角] 原生环境生成的完整 Prompt " + "=" * 40)
-                print(s['prompt_body'])
-                print("=" * 100 + "\n")
-
             # 严格遵照 Qwen2.5 的 Chat Template
             qwen_prompt = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{s['prompt_body']}<|im_end|>\n<|im_start|>assistant\n"
 
@@ -99,16 +106,20 @@ def main():
             outputs = llm.generate([qwen_prompt], sampling_params, use_tqdm=False)
             response_text = outputs[0].outputs[0].text
 
+            # 打印思考过程
             think_match = re.search(r'<think>(.*?)</think>', response_text, re.IGNORECASE | re.DOTALL)
             if think_match:
                 print(f"\033[90m{think_match.group(1).strip()}\033[0m")
 
-            action = extract_action(response_text)
-            print(f"{c}👉 {model_name} 决定执行: {action}\033[0m")
+            # 仅用于打印的 action 提取
+            action_for_print = extract_action(response_text)
+            print(f"{c}👉 {model_name} 意图执行: {action_for_print}\033[0m")
 
-            # 将文本动作直接丢给原生的 Manager
-            next_obs_dict, reward_list, done_list, info_list = mgr.step([action])
+            # 【真理时刻】：直接把大模型生成的包含 <think> 和 <action> 标签的原始长文本扔给底层！
+            # 让底层的 webshop_projection 去执行完整的正则匹配！
+            next_obs_dict, reward_list, done_list, info_list = mgr.step([response_text])
 
+            # Step 2 及以后的 Prompt，底层的 env_manager 会自动带上 RAG 技能了，不需要再打补丁
             s['prompt_body'] = next_obs_dict['text'][0]
             s['reward'] = reward_list[0]
             s['done'] = done_list[0]
