@@ -57,18 +57,18 @@ def parse_skills(prompt_body):
 def startup_event():
     print("🚀 正在全局初始化 Web 竞技场环境与模型 (仅执行一次)...")
     if not ray.is_initialized():
-        # 强制指定 Ray 的临时目录和对象溢出目录
-        CUSTOM_RAY_DIR = "/polarfs/models/luotuo/ray_tmp"  # 👈 替换为你的真实路径
-        os.makedirs(CUSTOM_RAY_DIR, exist_ok=True)
+        # 仅将海量的 Object Spilling 数据放到大容量磁盘
+        SPILL_DIR = "/polarfs/models/luotuo/ray_tmp"  # 👈 请依然替换为你的真实大盘路径
+        os.makedirs(SPILL_DIR, exist_ok=True)
 
         ray.init(
             ignore_reinit_error=True,
-            _temp_dir=CUSTOM_RAY_DIR,
+            # ❌ 删掉之前加的 _temp_dir 参数，让核心 socket 继续留在本地 /tmp
             _system_config={
-                # 强制把内存放不下的 Object Spilling 也写到你的大盘里，而不是 /tmp
+                # ✅ 强制把内存放不下的几个 GB/TB 的大文件写到大盘里
                 "object_spilling_config": json.dumps({
                     "type": "filesystem",
-                    "params": {"directory_path": f"{CUSTOM_RAY_DIR}/spill"}
+                    "params": {"directory_path": SPILL_DIR}
                 })
             }
         )
