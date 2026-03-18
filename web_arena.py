@@ -21,7 +21,6 @@ sys_env = {}
 
 
 def to_json_serializable(data):
-    """递归将所有 numpy 数据类型转换为 python 原生类型，解决 JSON 报错"""
     if isinstance(data, dict):
         return {k: to_json_serializable(v) for k, v in data.items()}
     elif isinstance(data, list):
@@ -43,7 +42,6 @@ def extract_action(text: str) -> str:
 
 
 def patch_step1_prompt(mgr, raw_prompt):
-    """你的原始补丁逻辑：首步注入 RAG"""
     if mgr.retrieval_memory and mgr.retrieved_memories:
         skills_text = mgr.retrieval_memory.format_for_prompt(mgr.retrieved_memories[0])
         patch = f"\n\n## Retrieved Relevant Experience\n\n{skills_text}\n\n"
@@ -54,26 +52,24 @@ def patch_step1_prompt(mgr, raw_prompt):
 
 
 def extract_skills_from_prompt(prompt_text):
-    """从你的 Prompt 结构中提取技能名称（匹配 **加粗文本**）"""
     skills = []
     exp_match = re.search(r'## Retrieved Relevant Experience(.*?)## Current Progress', prompt_text, re.S)
     if exp_match:
-        skills = re.findall(r'- \*\*(.*?)\*\*:', exp_match.group(1))
+        raw_skills = re.findall(r'- \*\*(.*?)\*\*', exp_match.group(1))
+        # 过滤掉 Mistakes to Avoid 中的格式干扰词
+        skills = [s for s in raw_skills if s.lower() not in ["don't", "instead"]]
     return list(set(skills))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 正在全局初始化 Web 竞技场环境与模型 (仅执行一次)...")
+    print("🚀 正在全局初始化 Web 竞技场环境与模型...")
     if not ray.is_initialized():
         SPILL_DIR = "/polarfs/models/luotuo/ray_tmp"
         os.makedirs(SPILL_DIR, exist_ok=True)
-        ray.init(
-            ignore_reinit_error=True,
-            _system_config={
-                "object_spilling_config": json.dumps({"type": "filesystem", "params": {"directory_path": SPILL_DIR}})
-            }
-        )
+        ray.init(ignore_reinit_error=True, _system_config={
+            "object_spilling_config": json.dumps({"type": "filesystem", "params": {"directory_path": SPILL_DIR}})
+        })
 
     PATH_3B_MODEL = "/home/bo.li/data/SkillRL/checkpoints/verl_agent_webshop/3b_hf_merged"
     PATH_3B_SKILL = "/home/bo.li/data/SkillRL/checkpoints/verl_agent_webshop/grpo_qwen2.5_3b_skills_dynamic/updated_skills_step90.json"
@@ -133,8 +129,6 @@ async def websocket_arena(websocket: WebSocket):
                 {"type": "task_start", "task": task_desc, "current": task_idx + 1, "total": num_tasks})
 
             active = {"3B": True, "7B": True}
-
-            # 使用 prompt_body 记录状态，使用 anchor 记录屏幕
             states = {
                 "3B": {"prompt": patch_step1_prompt(sys_env['mgr_3b'], obs_3b['text'][0]),
                        "anchor": obs_3b['anchor'][0], "step": 1},
@@ -148,10 +142,11 @@ async def websocket_arena(websocket: WebSocket):
 
                     mgr = sys_env[f'mgr_{m.lower()}']
                     llm = sys_env[f'llm_{m.lower()}']
-
-                    # 使用 Qwen 的严格 Chat Template
                     prompt_body = states[m]['prompt']
-                    qwen_prompt = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{prompt_body}<|im_end|>\n<|im_start|>assistant\n"
+
+                    # 🔥 强制指令：让模型必须在 <think> 里把技能名字念出来
+                    sys_instruction = "You are an expert agent. IMPORTANT: If you use any 'Retrieved Relevant Experience', you MUST explicitly mention their exact names (e.g., 'I will use Focus Key Query') inside your <think> tags."
+                    qwen_prompt = f"<|im_start|>system\n{sys_instruction}<|im_end|>\n<|im_start|>user\n{prompt_body}<|im_end|>\n<|im_start|>assistant\n"
 
                     outputs = await asyncio.get_event_loop().run_in_executor(None, lambda: llm.generate([qwen_prompt],
                                                                                                         sys_env[
@@ -163,19 +158,15 @@ async def websocket_arena(websocket: WebSocket):
                     think = think_match.group(1).strip() if think_match else resp.split('<action>')[0].strip()
                     action = extract_action(resp)
 
-                    # 从系统 Prompt 提取出检索到的 Skills
                     retrieved_skills = extract_skills_from_prompt(prompt_body)
-                    # 检查大模型在 Think 中是否真的用到了这个 Skill 的名字
+                    # 在思考过程中寻找被点名的技能
                     used_skills = [s for s in retrieved_skills if s.lower() in think.lower()]
 
                     step_data = {
                         "step": int(states[m]['step']),
                         "screen": str(states[m]['anchor']).replace('[SEP]', '\n').replace("'", ""),
-                        # 👈 恢复 anchor 作为虚拟屏幕
-                        "think": think,
-                        "action": action,
-                        "skills": retrieved_skills,
-                        "used_skills": used_skills
+                        "think": think, "action": action,
+                        "skills": retrieved_skills, "used_skills": used_skills
                     }
                     task_history["steps"][m].append(step_data)
 
