@@ -28,6 +28,10 @@ def extract_action(text: str) -> str:
     return fallback.group(1).strip() if fallback else "click[back to search]"
 
 
+def parse_skills_from_think(think_text):
+    # 正则提取类似 [Skill_01] 或 [Skill_Search] 的标签
+    return list(set(re.findall(r'\[Skill_[\w\d]+\]', think_text)))
+
 def patch_step1_prompt(mgr, raw_prompt):
     if mgr.retrieval_memory and mgr.retrieved_memories:
         skills_text = mgr.retrieval_memory.format_for_prompt(mgr.retrieved_memories[0])
@@ -123,98 +127,92 @@ def step_environment(mgr, response_text):
 async def websocket_arena(websocket: WebSocket):
     await websocket.accept()
     try:
-        # 接收前端的参数：跑多少个批量任务
         msg = await websocket.receive_json()
         num_tasks = int(msg.get("num_tasks", 10))
 
-        score_3b = 0
-        score_7b = 0
+        # 统计数据结构
+        stats = {"3B": {"success": 0, "skill_usage": {}}, "7B": {"success": 0, "skill_usage": {}}}
 
-        # ========== 开启批量评测循环 ==========
         for task_idx in range(num_tasks):
-            # 刷新环境获取新任务（测试集会自动翻页）
-            obs_dict_3b, obs_dict_7b = await asyncio.to_thread(reset_environments)
+            # 增加空字典作为 kwargs 传入
+            obs_3b, obs_7b = await asyncio.to_thread(lambda: (
+                sys_env['mgr_3b'].reset(kwargs={})[0],
+                sys_env['mgr_7b'].reset(kwargs={})[0]
+            ))
             task_desc = sys_env['mgr_3b'].tasks[0]
 
-            # 通知前端新一轮任务开始
-            await websocket.send_json({
-                "type": "task_start",
-                "task": task_desc,
-                "current": task_idx + 1,
-                "total": num_tasks
-            })
-
-            state = {
-                '3B': {'prompt_body': patch_step1_prompt(sys_env['mgr_3b'], obs_dict_3b['text'][0]),
-                       'raw_obs': obs_dict_3b['anchor'][0], 'done': False, 'step': 1},
-                '7B': {'prompt_body': patch_step1_prompt(sys_env['mgr_7b'], obs_dict_7b['text'][0]),
-                       'raw_obs': obs_dict_7b['anchor'][0], 'done': False, 'step': 1}
+            # 记录当前 Task 的完整轨迹供回放
+            task_history = {
+                "id": task_idx + 1,
+                "goal": task_desc,
+                "steps": {"3B": [], "7B": []},
+                "final_reward": {"3B": 0, "7B": 0}
             }
 
-            # 单个任务的回合交互
-            while not (state['3B']['done'] and state['7B']['done']):
-                for model_name, llm, mgr in [('3B', sys_env['llm_3b'], sys_env['mgr_3b']),
-                                             ('7B', sys_env['llm_7b'], sys_env['mgr_7b'])]:
-                    s = state[model_name]
-                    if s['done']: continue
+            await websocket.send_json(
+                {"type": "task_start", "task": task_desc, "current": task_idx + 1, "total": num_tasks})
 
-                    # 1. 渲染屏幕
+            active = {"3B": True, "7B": True}
+            states = {
+                "3B": {"obs": obs_3b, "step": 1},
+                "7B": {"obs": obs_7b, "step": 1}
+            }
+
+            while any(active.values()):
+                for m in ["3B", "7B"]:
+                    if not active[m]: continue
+
+                    mgr = sys_env[f'mgr_{m.lower()}']
+                    # 强引导 Prompt：要求模型必须引用 Skill ID
+                    prompt = f"System: You are an agent. Reference skills as [Skill_XX] in <think>.\nGoal: {task_desc}\nObs: {states[m]['obs']['text'][0]}"
+
+                    outputs = await asyncio.get_event_loop().run_in_executor(None, lambda: sys_env[
+                        f'llm_{m.lower()}'].generate([prompt], sys_env['sampling_params'], use_tqdm=False))
+                    resp = outputs[0].outputs[0].text
+
+                    # 1. 提取内容（增加防御性判断，防止 NoneType 报错）
+                    think_match = re.search(r'<think>(.*?)</think>', resp, re.S)
+                    think = think_match.group(1).strip() if think_match else resp.split('<action>')[0].strip()
+
+                    # 2. 提取 Action（同样增加防御）
+                    action_match = re.search(r'<action>(.*?)</action>', resp, re.S)
+                    action = action_match.group(1).strip() if action_match else "click[back to search]"
+
+                    # 3. 解析 Skills（扩大搜索范围到全文）
+                    skills_detected = parse_skills_from_think(resp)
+
+                    # 4. 发送实时更新 (Live Update)
                     await websocket.send_json({
-                        "type": "state_update",
-                        "model": model_name,
-                        "step": s['step'],
-                        "screen_elements": parse_screen_elements(s['raw_obs']),
-                        "skills": parse_skills(s['prompt_body'])
+                        "type": "live_step_update",
+                        "model": m,
+                        "data": {
+                            "step": states[m]['step'],
+                            "screen": states[m]['obs']['text'][0].replace('[SEP]', '\n'),  # 换行处理
+                            "think": think,
+                            "action": action,
+                            "skills": skills_detected
+                        }
                     })
 
-                    # 2. 推理
-                    qwen_prompt = f"<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\n{s['prompt_body']}<|im_end|>\n<|im_start|>assistant\n"
-                    loop = asyncio.get_event_loop()
-                    outputs = await loop.run_in_executor(None,
-                                                         lambda: llm.generate([qwen_prompt], sys_env['sampling_params'],
-                                                                              use_tqdm=False))
-                    response_text = outputs[0].outputs[0].text
+                    # 执行步进...
+                    next_obs, reward, done, _ = await asyncio.to_thread(lambda: mgr.step([resp]))
+                    states[m]["obs"] = next_obs
+                    states[m]["step"] += 1
 
-                    think_match = re.search(r'<think>(.*?)</think>', response_text, re.IGNORECASE | re.DOTALL)
-                    think_text = think_match.group(1).strip() if think_match else "No think tags."
-                    action_text = extract_action(response_text)
+                    if done[0] or states[m]["step"] > 15:
+                        active[m] = False
+                        task_history["final_reward"][m] = reward[0]
+                        if reward[0] == 10.0: stats[m]["success"] += 1
+                        # 更新全局技能热力统计
+                        for s in skills_detected:
+                            stats[m]["skill_usage"][s] = stats[m]["skill_usage"].get(s, 0) + (
+                                1 if reward[0] == 10.0 else 0)
 
-                    # 3. 渲染动作
-                    await websocket.send_json({
-                        "type": "model_action",
-                        "model": model_name,
-                        "step": s['step'],
-                        "think": think_text,
-                        "action": action_text
-                    })
-
-                    # 4. 执行原汁原味的步进
-                    next_obs_dict, reward_list, done_list, _ = await asyncio.to_thread(step_environment, mgr,
-                                                                                       response_text)
-
-                    s['prompt_body'] = next_obs_dict['text'][0]
-                    s['raw_obs'] = next_obs_dict['anchor'][0]
-                    s['done'] = done_list[0]
-
-                    if s['done']:
-                        reward = float(reward_list[0])
-                        if reward == 10.0:
-                            if model_name == '3B': score_3b += 1
-                            if model_name == '7B': score_7b += 1
-                        await websocket.send_json({"type": "task_done", "model": model_name, "reward": reward})
-
-                    s['step'] += 1
-                    if s['step'] > 15 and not s['done']:
-                        s['done'] = True
-                        await websocket.send_json(
-                            {"type": "task_done", "model": model_name, "reward": 0.0, "msg": "Timeout"})
-
-            # 单个任务结束后，刷新全局计分板
+            # 任务结束，发送完整回放包
             await websocket.send_json({
-                "type": "batch_progress",
-                "score_3b": score_3b,
-                "score_7b": score_7b,
-                "current": task_idx + 1
+                "type": "history_entry",
+                "data": task_history,
+                "stats": stats
             })
 
     except WebSocketDisconnect:
