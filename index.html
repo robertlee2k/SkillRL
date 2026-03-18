@@ -1,83 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"><title>SkillRL Debugger v2.2</title>
+    <meta charset="UTF-8"><title>Skill-RL Debugger v2.3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .active-tab { border-bottom: 4px solid #3b82f6; color: white; background: #1e293b; }
-        .screen-box { font-family: 'Courier New', monospace; white-space: pre-wrap; font-size: 11px; line-height: 1.2; }
-        .success-border { border: 2px solid #22c55e !important; box-shadow: 0 0 10px rgba(34,197,94,0.3); }
-        .fail-border { border: 2px solid #ef4444 !important; box-shadow: 0 0 10px rgba(239,68,68,0.3); }
+        .screen-content { font-family: 'ui-monospace', monospace; white-space: pre-wrap; font-size: 11px; }
+        .success-card { border: 2px solid #22c55e !important; background: rgba(20, 83, 45, 0.1); }
+        .fail-card { border: 2px solid #ef4444 !important; background: rgba(127, 29, 29, 0.1); }
     </style>
 </head>
 <body class="bg-black text-gray-200 h-screen flex flex-col overflow-hidden">
-    <header class="p-4 bg-gray-900 border-b border-gray-800 flex justify-between items-center">
+
+    <header class="p-4 bg-gray-900 border-b border-gray-800 flex justify-between items-center shadow-lg">
         <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-blue-600 rounded flex items-center justify-center font-bold text-white">SR</div>
-            <div>
-                <h1 class="text-sm font-black text-white uppercase tracking-tighter">Skill-RL Arena Debugger</h1>
-                <p id="status-bar" class="text-[10px] text-gray-500 font-mono italic">Ready</p>
-            </div>
+            <div class="p-2 bg-blue-600 rounded-lg text-white font-bold text-xs">ARENA</div>
+            <h1 id="status-bar" class="text-xs font-mono text-gray-400 uppercase">Ready</h1>
         </div>
         <div class="flex items-center gap-4">
             <div class="flex bg-gray-800 rounded p-1">
                 <button id="mode-live" class="px-4 py-1 text-xs font-bold active-tab">LIVE</button>
-                <button id="mode-review" class="px-4 py-1 text-xs font-bold text-gray-400">REVIEW</button>
+                <button id="mode-review" class="px-4 py-1 text-xs font-bold text-gray-500">REVIEW</button>
             </div>
-            <label class="text-[10px] font-bold text-gray-400 bg-gray-800 px-2 py-2 rounded border border-gray-700">
-                <input type="checkbox" id="filter-fail"> FAILURES ONLY
-            </label>
-            <div class="flex gap-1 bg-gray-800 p-1 rounded">
-                <button id="prev-btn" class="px-2 py-1 bg-gray-700 rounded hover:bg-blue-600 disabled:opacity-30">◀</button>
-                <span id="page-info" class="text-[10px] font-mono self-center px-2">TASK 0/0</span>
-                <button id="next-btn" class="px-2 py-1 bg-gray-700 rounded hover:bg-blue-600 disabled:opacity-30">▶</button>
+            <label class="text-[10px] font-bold text-gray-400"><input type="checkbox" id="filter-fail"> SHOW FAILURES</label>
+            <div class="flex gap-2 bg-gray-800 px-2 py-1 rounded">
+                <button id="prev-btn" class="text-blue-400 disabled:opacity-20">◀</button>
+                <span id="page-info" class="text-[10px] font-mono self-center">0/0</span>
+                <button id="next-btn" class="text-blue-400 disabled:opacity-20">▶</button>
             </div>
-            <input type="number" id="num-tasks" value="10" class="bg-gray-800 border border-gray-700 rounded w-12 text-center text-xs font-bold p-1">
-            <button id="start-btn" class="bg-blue-600 px-6 py-2 rounded font-black hover:bg-blue-500 transition">LAUNCH</button>
+            <input type="number" id="num-tasks" value="10" class="w-12 bg-gray-800 border border-gray-700 rounded text-center text-xs p-1">
+            <button id="start-btn" class="bg-blue-600 px-6 py-2 rounded text-xs font-black hover:bg-blue-500">LAUNCH</button>
         </div>
     </header>
 
     <main class="flex-1 flex gap-4 p-4 overflow-hidden">
-        <div id="panel-3B" class="flex-1 bg-gray-900 rounded-xl border border-gray-800 flex flex-col p-4 relative">
-            <div class="flex justify-between mb-2"><span class="text-[10px] font-black text-cyan-500 uppercase">Qwen-3B</span><div id="reward-3B" class="text-lg"></div></div>
+        <div id="panel-3B" class="flex-1 bg-gray-900 rounded-2xl border border-gray-800 flex flex-col p-4 transition-all overflow-hidden">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-[10px] font-bold text-cyan-400">QWEN-3B</span>
+                <div id="reward-3B" class="text-xs font-black"></div>
+            </div>
             <div class="flex-1 flex gap-4 overflow-hidden">
-                <div id="scr-3B" class="w-2/5 bg-white rounded p-2 text-black screen-box overflow-y-auto"></div>
+                <div id="scr-3B" class="w-2/5 bg-white rounded-xl text-black p-3 screen-content overflow-y-auto"></div>
                 <div class="w-3/5 flex flex-col gap-2">
-                    <div id="sk-3B" class="h-14 bg-black border border-gray-800 rounded p-1 flex flex-wrap gap-1 overflow-y-auto content-start"></div>
-                    <div id="th-3B" class="flex-1 bg-black rounded p-3 text-sm italic text-gray-400 overflow-y-auto border border-gray-800"></div>
-                    <div id="act-3B" class="h-12 bg-cyan-900 text-cyan-100 flex items-center justify-center font-black rounded border border-cyan-700"></div>
+                    <div id="sk-3B" class="h-14 bg-black border border-gray-800 rounded-lg p-2 flex flex-wrap gap-1 overflow-y-auto"></div>
+                    <div id="th-3B" class="flex-1 bg-black rounded-xl p-4 text-sm italic text-gray-400 overflow-y-auto border border-gray-800 leading-relaxed"></div>
+                    <div id="act-3B" class="h-12 bg-cyan-900 text-cyan-100 flex items-center justify-center font-black rounded-xl border border-cyan-800"></div>
                 </div>
             </div>
         </div>
-        <div id="panel-7B" class="flex-1 bg-gray-900 rounded-xl border border-gray-800 flex flex-col p-4 relative">
-            <div class="flex justify-between mb-2"><span class="text-[10px] font-black text-fuchsia-500 uppercase">Qwen-7B</span><div id="reward-7B" class="text-lg"></div></div>
+
+        <div id="panel-7B" class="flex-1 bg-gray-900 rounded-2xl border border-gray-800 flex flex-col p-4 transition-all overflow-hidden">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-[10px] font-bold text-fuchsia-400">QWEN-7B</span>
+                <div id="reward-7B" class="text-xs font-black"></div>
+            </div>
             <div class="flex-1 flex gap-4 overflow-hidden">
-                <div id="scr-7B" class="w-2/5 bg-white rounded p-2 text-black screen-box overflow-y-auto"></div>
+                <div id="scr-7B" class="w-2/5 bg-white rounded-xl text-black p-3 screen-content overflow-y-auto"></div>
                 <div class="w-3/5 flex flex-col gap-2">
-                    <div id="sk-7B" class="h-14 bg-black border border-gray-800 rounded p-1 flex flex-wrap gap-1 overflow-y-auto content-start"></div>
-                    <div id="th-7B" class="flex-1 bg-black rounded p-3 text-sm italic text-gray-400 overflow-y-auto border border-gray-800"></div>
-                    <div id="act-7B" class="h-12 bg-fuchsia-900 text-fuchsia-100 flex items-center justify-center font-black rounded border border-fuchsia-700"></div>
+                    <div id="sk-7B" class="h-14 bg-black border border-gray-800 rounded-lg p-2 flex flex-wrap gap-1 overflow-y-auto"></div>
+                    <div id="th-7B" class="flex-1 bg-black rounded-xl p-4 text-sm italic text-gray-400 overflow-y-auto border border-gray-800 leading-relaxed"></div>
+                    <div id="act-7B" class="h-12 bg-fuchsia-900 text-fuchsia-100 flex items-center justify-center font-black rounded-xl border border-fuchsia-800"></div>
                 </div>
             </div>
         </div>
     </main>
 
-    <footer class="h-28 bg-gray-900 border-t border-gray-800 p-3 flex gap-4">
-        <div id="heatmap-container" class="flex-1 flex gap-2 items-end overflow-x-auto pb-2"></div>
+    <footer class="h-32 bg-gray-900 border-t border-gray-800 p-4 flex gap-4">
+        <div id="heatmap" class="flex-1 flex gap-2 items-end overflow-x-auto pb-2"></div>
     </footer>
 
     <script>
         let allTasks = [], viewIndex = 0, isReviewMode = false, ws = null;
+
         const updateUI = (model, data, r=null) => {
             document.getElementById(`scr-${model}`).innerText = data.screen;
             document.getElementById(`th-${model}`).innerText = data.think;
             document.getElementById(`act-${model}`).innerText = data.action;
-            document.getElementById(`sk-${model}`).innerHTML = (data.skills || []).map(s => `<span class='bg-orange-900 text-orange-300 text-[9px] px-1 rounded border border-orange-700'>${s}</span>`).join('');
+            document.getElementById(`sk-${model}`).innerHTML = (data.skills || []).map(s =>
+                `<span class='bg-blue-900/50 text-blue-300 border border-blue-800 px-2 py-0.5 rounded text-[9px] font-bold'>${s}</span>`
+            ).join('');
+
             if (r !== null) {
                 const rDiv = document.getElementById(`reward-${model}`);
-                rDiv.innerText = r >= 10 ? "SUCCESS 🏅" : "FAILED ❌";
+                const pDiv = document.getElementById(`panel-${model}`);
+                rDiv.innerText = r >= 10 ? "SUCCESS 🏆" : "FAILED ❌";
                 rDiv.className = r >= 10 ? "text-green-500 font-bold" : "text-red-500 font-bold";
-                document.getElementById(`panel-${model}`).className = `flex-1 bg-gray-900 rounded-xl p-4 relative flex flex-col ${r >= 10 ? 'success-border' : 'fail-border'}`;
+                pDiv.className = `flex-1 bg-gray-900 rounded-2xl border flex flex-col p-4 transition-all overflow-hidden ${r >= 10 ? 'success-card' : 'fail-card'}`;
             }
         };
 
@@ -86,7 +94,6 @@
             allTasks = []; viewIndex = 0;
             const ws_protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${ws_protocol}//${window.location.host}/ws/arena`);
-            ws.onopen = () => ws.send(JSON.stringify({num_tasks: parseInt(num)}));
             ws.onmessage = (e) => {
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'live_step_update' && !isReviewMode) updateUI(msg.model, msg.data);
@@ -94,9 +101,10 @@
                     allTasks.push(msg.data);
                     updateHeatmap(msg.stats);
                     if (!isReviewMode) { viewIndex = allTasks.length - 1; renderTask(msg.data); }
-                    document.getElementById('page-info').innerText = `TASK ${viewIndex + 1}/${allTasks.length}`;
+                    document.getElementById('page-info').innerText = `${viewIndex + 1}/${allTasks.length}`;
                 }
             };
+            ws.onopen = () => ws.send(JSON.stringify({num_tasks: parseInt(num)}));
         };
 
         function renderTask(task) {
@@ -105,19 +113,19 @@
                 const steps = task.steps[m];
                 updateUI(m, steps[steps.length - 1], task.final_reward[m]);
             });
-            document.getElementById('page-info').innerText = `TASK ${viewIndex + 1}/${allTasks.length}`;
+            document.getElementById('page-info').innerText = `${viewIndex + 1}/${allTasks.length}`;
         }
 
         function updateHeatmap(stats) {
-            const container = document.getElementById('heatmap-container');
-            container.innerHTML = '';
-            const allSkills = new Set([...Object.keys(stats['3B'].skill_usage), ...Object.keys(stats['7B'].skill_usage)]);
-            allSkills.forEach(s => {
+            const h = document.getElementById('heatmap');
+            h.innerHTML = '';
+            const skills = new Set([...Object.keys(stats['3B'].skill_usage), ...Object.keys(stats['7B'].skill_usage)]);
+            skills.forEach(s => {
                 const s3 = stats['3B'].skill_usage[s] || 0, s7 = stats['7B'].skill_usage[s] || 0;
-                container.innerHTML += `<div class="flex-1 min-w-[30px] flex items-end gap-1 relative group" style="height: 60px">
-                    <div class="w-2 bg-cyan-600" style="height: ${s3*5}px"></div>
-                    <div class="w-2 bg-fuchsia-600" style="height: ${s7*5}px"></div>
-                    <div class="hidden group-hover:block absolute -top-6 bg-white text-black text-[8px] p-1 rounded z-50">${s}</div>
+                h.innerHTML += `<div class="flex-1 min-w-[30px] flex items-end gap-1 relative group" style="height: 60px">
+                    <div class="flex-1 bg-cyan-600" style="height: ${s3*6}px"></div>
+                    <div class="flex-1 bg-fuchsia-600" style="height: ${s7*6}px"></div>
+                    <div class="hidden group-hover:block absolute -top-8 bg-white text-black text-[8px] p-1 rounded z-50 whitespace-nowrap">${s}</div>
                 </div>`;
             });
         }
@@ -125,8 +133,9 @@
         document.getElementById('prev-btn').onclick = () => { if (viewIndex > 0) { viewIndex--; renderTask(getFiltered()[viewIndex]); } };
         document.getElementById('next-btn').onclick = () => { if (viewIndex < getFiltered().length - 1) { viewIndex++; renderTask(getFiltered()[viewIndex]); } };
         const getFiltered = () => document.getElementById('filter-fail').checked ? allTasks.filter(t => t.final_reward['3B'] < 10 || t.final_reward['7B'] < 10) : allTasks;
-        document.getElementById('mode-review').onclick = () => { isReviewMode = true; document.getElementById('mode-review').className = "px-4 py-1 text-xs font-bold active-tab"; document.getElementById('mode-live').className = "px-4 py-1 text-xs font-bold text-gray-400"; };
-        document.getElementById('mode-live').onclick = () => { isReviewMode = false; document.getElementById('mode-live').className = "px-4 py-1 text-xs font-bold active-tab"; document.getElementById('mode-review').className = "px-4 py-1 text-xs font-bold text-gray-400"; };
+
+        document.getElementById('mode-review').onclick = () => { isReviewMode = true; document.getElementById('mode-review').className = "px-4 py-1 text-xs font-bold active-tab"; document.getElementById('mode-live').className = "px-4 py-1 text-xs font-bold text-gray-500"; };
+        document.getElementById('mode-live').onclick = () => { isReviewMode = false; document.getElementById('mode-live').className = "px-4 py-1 text-xs font-bold active-tab"; document.getElementById('mode-review').className = "px-4 py-1 text-xs font-bold text-gray-500"; };
     </script>
 </body>
 </html>
