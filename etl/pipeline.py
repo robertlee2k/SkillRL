@@ -2,17 +2,17 @@
 """Full ETL pipeline orchestration.
 
 Implements run_pipeline for complete end-to-end processing.
+Uses LLM for scene classification and playbook generation.
 """
 
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from .batch import load_sessions, save_playbooks, process_batch
 from .classifier import classify_scene
-from .validator import validate_playbook
-from .config import VALID_SKILLS
+from .validator import validate_playbook, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,8 @@ def run_pipeline(
 
     Stage 1: Load raw sessions
     Stage 2: Aggregate and clean
-    Stage 3: Classify scenes
-    Stage 4: Build and validate playbooks
+    Stage 3: Classify scenes (via LLM)
+    Stage 4: Build and validate playbooks (via LLM)
 
     Args:
         input_file: Path to input JSON file with raw sessions
@@ -51,22 +51,37 @@ def run_pipeline(
     stats = {'total': result['stats']['total'], 'valid': 0, 'invalid': result['stats']['invalid']}
     logger.info(f"Cleaned {len(cleaned)} valid sessions")
 
-    # Stage 3 & 4: Classify and build playbooks
+    # Stage 3 & 4: Classify and build playbooks using LLM
     playbooks = []
-    for session in cleaned:
-        # Add scene classification
-        session['scenario'] = classify_scene(session['turns'])
+    for i, session in enumerate(cleaned):
+        session_id = session.get('session_id', f'unknown_{i}')
 
-        # Build playbook structure
+        # Stage 3: Classify scene using LLM
+        try:
+            scenario = classify_scene(session['turns'])
+            session['scenario'] = scenario
+            logger.info(f"[{session_id}] Classified as: {scenario}")
+        except Exception as e:
+            logger.error(f"[{session_id}] Classification failed: {e}")
+            stats['invalid'] += 1
+            continue
+
+        # Stage 4: Build playbook using LLM
         playbook = build_playbook(session)
 
-        # Validate
+        if playbook is None:
+            logger.warning(f"[{session_id}] Playbook generation failed")
+            stats['invalid'] += 1
+            continue
+
+        # Validate playbook
         try:
             validate_playbook(playbook)
             playbooks.append(playbook)
             stats['valid'] += 1
-        except Exception as e:
-            logger.warning(f"Invalid playbook {session.get('session_id')}: {e}")
+            logger.info(f"[{session_id}] Playbook generated successfully with {len(playbook['nodes'])} nodes")
+        except ValidationError as e:
+            logger.warning(f"[{session_id}] Playbook validation failed: {e}")
             stats['invalid'] += 1
 
     # Save output
@@ -76,75 +91,57 @@ def run_pipeline(
     return stats
 
 
-def build_playbook(session: Dict[str, Any]) -> Dict[str, Any]:
+def build_playbook(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Build playbook JSON from cleaned session.
-    Follows design spec Section 5.1 schema.
+    Build playbook JSON from cleaned session using LLM.
 
     Args:
-        session: Cleaned session dict with 'session_id', 'turns', 'initial_slots'
+        session: Cleaned session dict with 'session_id', 'turns', 'initial_slots', 'scenario'
 
     Returns:
-        Playbook dict ready for validation and serialization
+        Playbook dict ready for validation, or None on failure
     """
     turns = session.get('turns', [])
-    skill_list = list(VALID_SKILLS)[:3]  # Use first 3 skills for transitions
+    session_id = session.get('session_id', 'unknown')
+    scenario = session.get('scenario', 'unknown')
+    initial_slots = session.get('initial_slots', {})
 
-    # Build nodes from turns
-    nodes = {}
-    node_ids = []
+    if not turns:
+        logger.warning(f"[{session_id}] No turns to build playbook from")
+        return None
 
+    # Format conversation for LLM
+    conversation_lines = []
     for i, turn in enumerate(turns):
-        if i == 0:
-            node_id = 'root'
-        else:
-            node_id = f'node_{i}'
-        node_ids.append(node_id)
+        role = turn.get('role', 'Unknown')
+        text = turn.get('text', '')
+        if role == 'User':
+            conversation_lines.append(f"买家: {text}")
+        elif role == 'Agent':
+            conversation_lines.append(f"客服: {text}")
 
-        nodes[node_id] = {
-            'buyer_text': turn.get('text', ''),
-            'sentiment': 'neutral',
-            'slot_updates': turn.get('slot_updates', {}),
-            'transitions': {},
-            'default_fallback': 'terminal'
+    conversation_text = "\n".join(conversation_lines)
+
+    # Call LLM to generate playbook
+    try:
+        from .llm_generator import call_llm_for_playbook
+        llm_result = call_llm_for_playbook(conversation_text, session_id)
+
+        if llm_result is None:
+            return None
+
+        # Build complete playbook with metadata
+        playbook = {
+            'playbook_id': f"{scenario}_{session_id}",
+            'scenario': scenario,
+            'subtype': 'general',
+            'initial_slots': initial_slots,
+            'session_id': session_id,
+            'nodes': llm_result.get('nodes', {})
         }
 
-    # Add transitions between nodes
-    for i, node_id in enumerate(node_ids):
-        if i < len(node_ids) - 1:
-            # Add transition to next node
-            nodes[node_id]['transitions'][skill_list[0]] = node_ids[i + 1]
+        return playbook
 
-    # Add terminal node
-    nodes['terminal'] = {
-        'buyer_text': '[END]',
-        'sentiment': 'calm',
-        'slot_updates': {},
-        'transitions': {},
-        'default_fallback': 'terminal'
-    }
-
-    # Add at least one angry node for validation (negative path requirement)
-    if len(node_ids) > 1:
-        # Make the second node have angry sentiment
-        nodes[node_ids[1]]['sentiment'] = 'angry'
-
-    # Ensure tree structure (at least 2 branches per non-terminal node)
-    # All turn nodes need at least 2 transitions
-    for node_id in node_ids:
-        transition_count = len(nodes[node_id]['transitions'])
-        if transition_count < 2:
-            # Add missing transitions to terminal
-            nodes[node_id]['transitions'][skill_list[1]] = 'terminal'
-        if transition_count < 1:
-            # If node had 0 transitions, add another one
-            nodes[node_id]['transitions'][skill_list[2]] = 'terminal'
-
-    return {
-        'playbook_id': f"{session.get('scenario', 'unknown')}_{session.get('session_id', 'unknown')}",
-        'scenario': session.get('scenario', 'unknown'),
-        'subtype': 'general',
-        'initial_slots': session.get('initial_slots', {}),
-        'session_id': session.get('session_id'),  # Include for test assertions
-        'nodes': nodes
-    }
+    except Exception as e:
+        logger.error(f"[{session_id}] LLM playbook generation failed: {e}")
+        return None

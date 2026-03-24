@@ -1,41 +1,55 @@
-# etl/classifier.py
+"""
+Scene classification for customer service conversations.
+Uses LLM-based classification for accuracy.
+"""
 from typing import List, Dict, Any
-from .config import SCENE_PATTERNS
+import logging
 
-# Define priority order for tie-breaking
-SCENE_PRIORITY = ['presale', 'logistics', 'aftersale']
+logger = logging.getLogger(__name__)
+
 
 def classify_scene(turns: List[Dict[str, Any]]) -> str:
     """
-    Classify scene type based on conversation content.
-    Returns: 'presale', 'logistics', 'aftersale', or 'unknown'
+    Classify scene type based on conversation content using LLM.
+
+    Args:
+        turns: List of turn dicts with 'role' and 'text' keys
+
+    Returns:
+        'presale', 'logistics', 'aftersale', or 'unknown'
     """
-    # Handle empty/None input
+    # Handle empty input
     if not turns:
+        logger.warning("[Classifier] Empty turns list, returning unknown")
         return 'unknown'
 
-    # Combine all user content
-    user_content = ' '.join(
-        t.get('text', '') or '' for t in turns if t.get('role') == 'User'
-    )
+    # Extract first 3 turns of User text for classification
+    user_texts = []
+    for turn in turns[:6]:  # Check first 6 turns to get 3 User turns
+        if turn.get('role') == 'User':
+            text = turn.get('text', '') or turn.get('buyer_text', '') or ''
+            if text.strip():
+                user_texts.append(text.strip())
+        if len(user_texts) >= 3:
+            break
 
-    if not user_content.strip():
+    if not user_texts:
+        logger.warning("[Classifier] No User text found, returning unknown")
         return 'unknown'
 
-    # Count matches for each category
-    scores = {}
-    for category, patterns in SCENE_PATTERNS.items():
-        score = sum(1 for p in patterns if p in user_content)
-        scores[category] = score
+    # Combine texts for LLM classification
+    conversation_text = "\n".join(f"买家: {text}" for text in user_texts)
 
-    # Return highest scoring category with deterministic tie-breaking
-    max_score = max(scores.values())
-    if max_score == 0:
+    # Call LLM for classification
+    try:
+        from .llm_generator import call_llm_for_classification
+        scene = call_llm_for_classification(conversation_text)
+
+        # Map 'trash' to 'unknown' for consistency
+        if scene == 'trash':
+            return 'unknown'
+        return scene
+
+    except Exception as e:
+        logger.error(f"[Classifier] LLM classification failed: {e}")
         return 'unknown'
-
-    # Tie-breaking: return first category in priority order with max score
-    for category in SCENE_PRIORITY:
-        if scores.get(category, 0) == max_score:
-            return category
-
-    return 'unknown'

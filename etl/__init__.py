@@ -19,6 +19,7 @@ from .batch import load_sessions, save_playbooks, process_batch
 from .classifier import classify_scene
 from .validator import validate_playbook, ValidationError, validate_playbook_with_details
 from .pipeline import run_pipeline, build_playbook
+from .llm_generator import call_llm_for_classification, call_llm_for_playbook, LLMGenerator
 
 __all__ = [
     # Config
@@ -50,4 +51,8 @@ __all__ = [
     # Pipeline
     'run_pipeline',
     'build_playbook',
+    # LLM Generator
+    'call_llm_for_classification',
+    'call_llm_for_playbook',
+    'LLMGenerator',
 ]
