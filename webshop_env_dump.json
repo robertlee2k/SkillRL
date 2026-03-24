@@ -1,0 +1,11 @@
+{
+    "1_obs_type": "<class 'str'>",
+    "2_obs_raw_content": "WebShop [SEP] Instruction: [SEP] Find me slip resistant, non slip men's loafers & slip-ons with rubber outsole, rubber sole with color: r.brown-hole228, and size: 9.5, and price lower than 50.00 dollars [SEP] Search",
+    "3_info_type": "<class 'dict'>",
+    "4_info_keys": [
+        "available_actions",
+        "won"
+    ],
+    "5_info_raw_content": "{'available_actions': {'has_search_bar': True, 'clickables': ['search']}, 'won': False}",
+    "6_env_internal_attributes": {}
+}

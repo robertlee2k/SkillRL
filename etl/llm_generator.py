@@ -7,8 +7,9 @@ Required environment variable:
 """
 import os
 import json
+import re
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,40 @@ VALID_SKILLS = [
 ]
 
 VALID_SKILLS_STR = ', '.join(VALID_SKILLS)
+
+
+def extract_json_from_text(text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Extract JSON from text that may contain other content.
+    Handles markdown code blocks and raw JSON.
+    """
+    if text is None:
+        return None
+
+    text = text.strip()
+    # Try to parse directly first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find JSON in markdown code blocks
+    patterns = [
+        r'```json\s*([\s\S]*?)\s*```',  # ```json ... ```
+        r'```\s*([\s\S]*?)\s*```',       # ``` ... ```
+        r'\{[\s\S]*\}',                   # Raw JSON object
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                json_str = match.group(1) if '```' in pattern else match.group(0)
+                return json.loads(json_str)
+            except (json.JSONDecodeError, IndexError):
+                continue
+
+    return None
 
 
 class LLMGenerator:
@@ -78,12 +113,20 @@ class LLMGenerator:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
                 max_tokens=100,
             )
 
             content = response.choices[0].message.content
-            result = json.loads(content)
+            if content is None:
+                logger.error("[LLMGenerator] LLM returned None content")
+                return 'trash'
+
+            result = extract_json_from_text(content)
+
+            if result is None:
+                logger.error(f"[LLMGenerator] Could not parse JSON from response: {content[:100]}")
+                return 'trash'
+
             scene = result.get('scene', 'trash')
 
             # Validate scene is one of the allowed values
@@ -94,9 +137,6 @@ class LLMGenerator:
             logger.info(f"[LLMGenerator] Classification result: {scene}")
             return scene
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[LLMGenerator] JSON parse error in classification: {e}")
-            return 'trash'
         except Exception as e:
             logger.error(f"[LLMGenerator] Error calling LLM for classification: {e}")
             return 'trash'
@@ -159,7 +199,8 @@ class LLMGenerator:
 
 【输出格式要求】：
 输出严格的JSON结构，不要有任何额外解释。
-确保每个节点的transitions至少有2个分支（除了terminal节点）。
+
+🔴🔴🔴 强制要求：每个节点（除了terminal和fallback开头的节点）的transitions必须至少有2个分支！这是死规则，违反会导致验证失败！
 
 【JSON Schema】：
 {{
@@ -191,12 +232,15 @@ class LLMGenerator:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
                 max_tokens=4096,
             )
 
             content = response.choices[0].message.content
-            result = json.loads(content)
+            result = extract_json_from_text(content)
+
+            if result is None:
+                logger.error(f"[LLMGenerator] Could not parse JSON from playbook response")
+                return None
 
             # Validate basic structure
             if 'nodes' not in result:
@@ -206,9 +250,6 @@ class LLMGenerator:
             logger.info(f"[LLMGenerator] Generated playbook with {len(result['nodes'])} nodes")
             return result
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[LLMGenerator] JSON parse error in playbook generation: {e}")
-            return None
         except Exception as e:
             logger.error(f"[LLMGenerator] Error calling LLM for playbook: {e}")
             return None
