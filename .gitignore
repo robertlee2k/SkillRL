@@ -26,3 +26,21 @@ htmlcov/
 outputs/
 tensorboard_log/
 *.log
+
+# Output directories
+outputs/
+
+# Documentation drafts
+docs/superpowers/
+
+# Egg info
+verl.egg-info/
+
+# Misc markdown files
+CONVERSION_SUMMARY.md
+data_etl.md
+customer_service_skills.md
+customer_service_rl_design.md
+findings.md
+progress.md
+task_plan.md
