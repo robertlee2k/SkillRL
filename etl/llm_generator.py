@@ -31,7 +31,110 @@ VALID_SKILLS = [
     'aft_track_progress', 'aft_compensate', 'aft_reject_explain',
 ]
 
+VALID_SKILLS_SET = set(VALID_SKILLS)
 VALID_SKILLS_STR = ', '.join(VALID_SKILLS)
+
+
+def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Post-process LLM-generated playbook to fix common issues.
+
+    Fixes:
+    1. Removes invalid skills from available_skills and transitions
+    2. Adds fallback transitions if nodes have < 2 branches
+    3. Ensures all node references exist
+    4. Adds terminal node if missing
+    5. Removes unreachable nodes
+
+    Args:
+        playbook: Raw playbook dict from LLM
+
+    Returns:
+        Cleaned playbook dict
+    """
+    if 'nodes' not in playbook:
+        return playbook
+
+    nodes = playbook['nodes']
+
+    # Ensure terminal node exists
+    if 'terminal' not in nodes:
+        nodes['terminal'] = {
+            'buyer_text': '[END]',
+            'sentiment': 'calm',
+            'slot_updates': {},
+            'available_skills': [],
+            'transitions': {},
+            'default_fallback': 'terminal'
+        }
+
+    # Process each node
+    for node_id, node in nodes.items():
+        if not isinstance(node, dict):
+            continue
+
+        # Fix available_skills - filter out invalid skills
+        if 'available_skills' in node:
+            valid_skills = [s for s in node['available_skills'] if s in VALID_SKILLS_SET]
+            if not valid_skills:
+                valid_skills = ['gen_clarify', 'gen_apologize']
+            node['available_skills'] = valid_skills
+
+        # Fix transitions - filter out invalid skills and ensure ≥2 branches
+        if 'transitions' in node and isinstance(node['transitions'], dict):
+            # Filter invalid skills from transitions
+            valid_transitions = {
+                skill: target for skill, target in node['transitions'].items()
+                if skill in VALID_SKILLS_SET
+            }
+
+            # Ensure targets exist
+            valid_transitions = {
+                skill: target for skill, target in valid_transitions.items()
+                if target in nodes
+            }
+
+            # Add fallback transitions if < 2 branches (for non-terminal nodes)
+            if node_id != 'terminal' and len(valid_transitions) < 2:
+                # Add gen_clarify -> terminal if not present
+                if 'gen_clarify' not in valid_transitions:
+                    valid_transitions['gen_clarify'] = 'terminal'
+                # Add gen_apologize -> terminal if still < 2
+                if len(valid_transitions) < 2 and 'gen_apologize' not in valid_transitions:
+                    valid_transitions['gen_apologize'] = 'terminal'
+
+            node['transitions'] = valid_transitions
+
+        # Ensure default_fallback points to valid node
+        if 'default_fallback' not in node or node.get('default_fallback') not in nodes:
+            node['default_fallback'] = 'terminal'
+
+        # Ensure required fields exist
+        if 'buyer_text' not in node:
+            node['buyer_text'] = '...'
+        if 'sentiment' not in node:
+            node['sentiment'] = 'neutral'
+        if 'slot_updates' not in node:
+            node['slot_updates'] = {}
+
+    # Remove unreachable nodes (must be reachable via transitions or default_fallback)
+    reachable = {'root'}  # root is always reachable as entry point
+    for node in nodes.values():
+        reachable.update(node.get('transitions', {}).values())
+        fallback = node.get('default_fallback', '')
+        if fallback:
+            reachable.add(fallback)
+
+    # Keep only reachable nodes
+    playbook['nodes'] = {k: v for k, v in nodes.items() if k in reachable}
+
+    # Ensure at least one node has angry sentiment (required for RL punishment)
+    has_angry = any(n.get('sentiment') == 'angry' for n in playbook['nodes'].values())
+    if not has_angry and 'root' in playbook['nodes']:
+        # Set root sentiment to angry as fallback
+        playbook['nodes']['root']['sentiment'] = 'angry'
+
+    return playbook
 
 
 def extract_json_from_text(text: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -246,6 +349,9 @@ class LLMGenerator:
             if 'nodes' not in result:
                 logger.error("[LLMGenerator] LLM response missing 'nodes' key")
                 return None
+
+            # Post-process to fix common LLM issues
+            result = post_process_playbook(result)
 
             logger.info(f"[LLMGenerator] Generated playbook with {len(result['nodes'])} nodes")
             return result
