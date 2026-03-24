@@ -1,3 +1,28 @@
 
 # Worktrees for isolated development
 .worktrees/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Test outputs and temporary files
+session_order_data.json
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and outputs
+outputs/
+tensorboard_log/
+*.log
