@@ -44,6 +44,7 @@ class EnvState:
     """Environment state tracking."""
     current_node: str = 'root'
     action_history: List[str] = field(default_factory=list)
+    dialogue_history: List[Dict[str, str]] = field(default_factory=list)  # Full dialogue: [{"role": "buyer/agent", "content": "..."}]
     visited_nodes: List[str] = field(default_factory=list)
     slots: Dict[str, Any] = field(default_factory=dict)
     done: bool = False
@@ -111,6 +112,7 @@ class CustomerServiceEnv:
         self.state = EnvState(
             current_node='root',
             action_history=[],
+            dialogue_history=[],
             visited_nodes=['root'],
             slots=self.current_playbook.get('initial_slots', {}).copy(),
             done=False,
@@ -145,7 +147,9 @@ class CustomerServiceEnv:
             'available_skills': current_node_data.get('available_skills', []),
             'slots': self.state.slots,
             'action_history': self.state.action_history.copy(),
-            'done': self.state.done
+            'dialogue_history': self.state.dialogue_history.copy(),  # Full dialogue for LLM
+            'done': self.state.done,
+            'scenario': self.state.scenario
         }
 
     def step(self, action: str) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
@@ -169,8 +173,23 @@ class CustomerServiceEnv:
         nodes = self.current_playbook['nodes']
         current_node_data = nodes.get(self.state.current_node, {})
 
+        # Record current buyer message into dialogue history
+        current_buyer_text = current_node_data.get('buyer_text', '')
+        if current_buyer_text and current_buyer_text != '[END]':
+            self.state.dialogue_history.append({
+                'role': 'buyer',
+                'content': current_buyer_text
+            })
+
         # Track action
         self.state.action_history.append(action)
+
+        # Record agent action into dialogue history
+        self.state.dialogue_history.append({
+            'role': 'agent',
+            'action': action,
+            'content': f"[Action: {action}]"  # In real scenario, LLM would generate response
+        })
 
         # Calculate step reward
         step_reward = 0.0
@@ -314,7 +333,15 @@ class CustomerServiceEnv:
             f"Sentiment: {node.get('sentiment', 'neutral')}",
             f"Actions: {self.state.action_history}",
             f"Done: {self.state.done}, Won: {self.state.won}",
+            "",
+            "=== Dialogue History ===",
         ]
+
+        for turn in self.state.dialogue_history:
+            if turn['role'] == 'buyer':
+                lines.append(f"[买家] {turn['content'][:80]}...")
+            else:
+                lines.append(f"[客服] {turn.get('content', turn.get('action', 'N/A'))}")
 
         return "\n".join(lines)
 
