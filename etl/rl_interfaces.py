@@ -754,6 +754,9 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
                 won_value = float(info.get('won', 0))
                 success['success_rate'].append(won_value)
 
+                # Extract valid action rate for TensorBoard monitoring
+                success['valid_action_rate'].append(float(info.get('is_action_valid', 0)))
+
                 # Extract scenario-specific metrics
                 scenario = info.get('scenario', 'unknown')
                 success[f'{scenario}_success_rate'].append(won_value)
