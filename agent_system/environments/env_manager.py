@@ -891,6 +891,34 @@ def make_envs(config):
         envs = AppWorldEnvironmentManager(_envs, projection_f, config)
         val_envs = AppWorldEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
+    elif "customer" in config.env.env_name.lower() or config.env.env_name == "CustomerService":
+        # Customer Service Environment
+        from etl.rl_interfaces import (
+            CustomerServiceEnvironmentManager,
+            customer_service_fallback_projection,
+            build_customer_service_envs
+        )
+        from functools import partial
+
+        playbook_path = config.env.get("playbook_path", "outputs/playbooks_new.json")
+
+        _envs = build_customer_service_envs(
+            playbook_path=playbook_path,
+            env_num=config.data.train_batch_size,
+            seed=config.env.seed
+        )
+        _val_envs = build_customer_service_envs(
+            playbook_path=playbook_path,
+            env_num=config.data.val_batch_size,
+            seed=config.env.seed + 1000
+        )
+
+        projection_f = partial(customer_service_fallback_projection)
+        envs = CustomerServiceEnvironmentManager(_envs, projection_f, config)
+        val_envs = CustomerServiceEnvironmentManager(_val_envs, projection_f, config)
+
+        print(f"[make_envs] CustomerService envs created: train={config.data.train_batch_size}, val={config.data.val_batch_size}")
+        return envs, val_envs
     else:
         print("Environment not supported")
         exit(1)
