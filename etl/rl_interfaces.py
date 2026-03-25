@@ -473,7 +473,7 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
 
         super().__init__(envs, projection_f, config)
 
-    def reset(self, kwargs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def reset(self, kwargs: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Reset all environments and return initial observations.
 
@@ -481,18 +481,27 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
             kwargs: Optional reset parameters (e.g., specific playbook_ids)
 
         Returns:
-            Dict with 'text', 'image', 'anchor' keys and 'infos' stored internally
+            Tuple of:
+                - observations: Dict with 'text', 'image', 'anchor' keys
+                - infos: List of info dicts from environment reset
         """
         kwargs = kwargs or {}
-        self._last_infos: List[Dict[str, Any]] = []
 
-        # Reset base environments
+        # Initialize tracking state
+        self._last_infos: List[Dict[str, Any]] = []
         obs_list: List[Dict[str, Any]] = []
         infos: List[Dict[str, Any]] = []
 
-        # Handle vectorized reset
-        if hasattr(self.envs, 'reset'):
-            # Vectorized environment
+        # CRITICAL: Must explicitly iterate and reset each underlying environment
+        # This ensures CustomerServiceEnv.state is properly initialized
+        if hasattr(self.envs, 'envs'):
+            # SimpleVectorEnv wrapper with .envs attribute
+            for env in self.envs.envs:
+                obs, info = env.reset()
+                obs_list.append(obs)
+                infos.append(info)
+        elif hasattr(self.envs, 'reset'):
+            # Single environment or other vectorized env
             base_obs, base_infos = self.envs.reset(**kwargs)
 
             # Normalize to list format
@@ -526,7 +535,7 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
             "anchor": [obs.copy() for obs in obs_list],  # Store raw observations
         }
 
-        return observations
+        return observations, infos
 
     def step(
         self,
@@ -685,7 +694,10 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
 
         for i, obs in enumerate(observations):
             action_history = self.action_histories[i] if i < len(self.action_histories) else []
-            history_length = self.config.env.get("history_length", 5)
+            # Safely get history_length with proper default handling
+            history_length = self.config.env.get("history_length", 5) if hasattr(self.config.env, 'get') else getattr(self.config.env, 'history_length', 5)
+            if history_length is None:
+                history_length = 5
 
             prompt = CustomerServicePromptBuilder.build(
                 observation=obs,

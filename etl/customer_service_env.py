@@ -162,8 +162,14 @@ class CustomerServiceEnv:
         Returns:
             Tuple of (observation, reward, done, info)
         """
-        if not self.state or self.state.done:
-            raise RuntimeError("Environment not reset. Call reset() first.")
+        # Check if environment is initialized
+        if not self.state:
+            raise RuntimeError("Environment not initialized. Call reset() first.")
+
+        # Handle padded steps after episode is done (batch alignment in RL frameworks)
+        # Return dummy data instead of raising exception
+        if self.state.done:
+            return self._get_observation(), 0.0, True, {'info': 'Episode already done (padded step)'}
 
         if action not in VALID_SKILLS:
             logger.warning(f"[CustomerServiceEnv] Invalid action: {action}")

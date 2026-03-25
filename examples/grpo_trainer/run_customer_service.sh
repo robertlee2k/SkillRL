@@ -87,8 +87,7 @@ python3 -m verl.trainer.main_ppo \
     env.max_steps=20 \
     env.rollout.n=$group_size \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
-    env.use_skills_only_memory=False \
-    env.use_fallback_projection=True \
+    +env.use_fallback_projection=True \
     trainer.critic_warmup=0 \
     trainer.logger=['console','tensorboard'] \
     trainer.project_name='verl_agent_customer_service' \
