@@ -20,6 +20,7 @@ from .classifier import classify_scene
 from .validator import validate_playbook, ValidationError, validate_playbook_with_details
 from .pipeline import run_pipeline, build_playbook
 from .llm_generator import call_llm_for_classification, call_llm_for_playbook, LLMGenerator
+from .customer_service_env import CustomerServiceEnv, EnvState, create_env, run_random_episode
 
 __all__ = [
     # Config
@@ -55,4 +56,9 @@ __all__ = [
     'call_llm_for_classification',
     'call_llm_for_playbook',
     'LLMGenerator',
+    # RL Environment
+    'CustomerServiceEnv',
+    'EnvState',
+    'create_env',
+    'run_random_episode',
 ]

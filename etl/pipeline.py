@@ -133,10 +133,14 @@ def build_playbook(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Build complete playbook with metadata
         playbook = {
             'playbook_id': f"{scenario}_{session_id}",
+            'session_id': session_id,  # 用于可视化溯源
             'scenario': scenario,
             'subtype': 'general',
+            'business_outcome': {
+                'has_order': session.get('has_order', False),
+                'order_amount': session.get('order_amount', 0.0)
+            },
             'initial_slots': initial_slots,
-            'session_id': session_id,
             'nodes': llm_result.get('nodes', {})
         }
 

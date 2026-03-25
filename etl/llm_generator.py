@@ -289,15 +289,19 @@ class LLMGenerator:
    - 如果对话中买家提供了订单号、商品ID等信息，在slot_updates中标记
    - 例如：{{"order_id_collected": true}}
 
-5. **情绪评估**：
+5. **🔴🔴🔴 风控兜底规则（最高优先级）**：
+   - 在物流(logistics)和售后(aftersale)场景中，如果对话表明买家持续无法提供订单号，或者遇到系统查无此单的情况，你在脑补客服的应对分支时，正确的安全动作必须是使用 gen_transfer（转接人工），绝不能使用退款(aft_initiate_refund)、退换(aft_initiate_return/aft_initiate_exchange)、补偿(aft_compensate)或直接生硬拒绝(aft_reject_explain)的技能。
+   - 这是防止资损的红线规则！
+
+6. **情绪评估**：
    - 评估User在每个节点的情绪（calm/neutral/angry）
 
-6. **🔴 兜底节点（default_fallback）**：
+7. **🔴 兜底节点（default_fallback）**：
    - 每个节点必须有default_fallback字段
    - 指向一个通用的"买家困惑/不满"节点
    - 当RL模型选了合法但transitions中不存在的Skill时使用
 
-7. **合法Skill列表（available_skills）**：
+8. **合法Skill列表（available_skills）**：
    - 每个节点列出所有在该场景下合理的Skill（3-5个）
 
 【输出格式要求】：

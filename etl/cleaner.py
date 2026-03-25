@@ -66,7 +66,8 @@ def clean_session(
 
     return {
         'session_id': session.get('session_id'),
+        'has_order': session.get('has_order', False),
+        'order_amount': float(session.get('order_amount', 0.0)),
         'turns': turns,
-        'initial_slots': initial_slots,
-        'metadata': session.get('metadata', {})
+        'initial_slots': initial_slots
     }

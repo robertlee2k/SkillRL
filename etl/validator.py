@@ -44,10 +44,28 @@ def validate_playbook(playbook: dict) -> bool:
     errors = []
 
     # 1. Check required fields (including initial_slots)
-    required_fields = ['playbook_id', 'scenario', 'subtype', 'initial_slots', 'nodes']
+    required_fields = ['playbook_id', 'session_id', 'scenario', 'subtype', 'initial_slots', 'business_outcome', 'nodes']
     for field in required_fields:
         if field not in playbook:
             errors.append(f"Missing required field: {field}")
+
+    # 1a. Validate business_outcome structure
+    if 'business_outcome' in playbook:
+        bo = playbook['business_outcome']
+        if not isinstance(bo, dict):
+            errors.append("business_outcome must be a dict")
+        else:
+            if 'has_order' not in bo:
+                errors.append("business_outcome missing 'has_order' field")
+            if 'order_amount' not in bo:
+                errors.append("business_outcome missing 'order_amount' field")
+            elif not isinstance(bo.get('order_amount'), (int, float)):
+                errors.append("business_outcome.order_amount must be a number")
+
+    # 1b. Validate session_id is present and non-empty
+    if 'session_id' in playbook:
+        if not playbook['session_id']:
+            errors.append("session_id cannot be empty")
 
     # If nodes is missing, we can't continue validation
     if 'nodes' not in playbook:
