@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Playbooks - Playbook Viewer{% endblock %}
+
+{% block content %}
+<h1>Playbooks</h1>
+<p>Total: {{ playbooks|length }} playbooks</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Playbook ID</th>
+            <th>Session ID</th>
+            <th>Scenario</th>
+            <th>Subtype</th>
+            <th>Nodes</th>
+            <th>Has Order</th>
+            <th>Amount</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in playbooks %}
+        <tr onclick="window.location='/playbook/{{ p.playbook_id }}'" style="cursor: pointer;">
+            <td><code>{{ p.playbook_id }}</code></td>
+            <td><code>{{ p.session_id }}</code></td>
+            <td>{{ p.scenario }}</td>
+            <td>{{ p.subtype }}</td>
+            <td>{{ p.nodes|length }}</td>
+            <td>{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
+            <td>{{ p.business_outcome.order_amount }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
