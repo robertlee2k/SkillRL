@@ -4,9 +4,47 @@
 
 {% block content %}
 <h1>Playbooks</h1>
-<p>Total: {{ playbooks|length }} playbooks</p>
 
-<table>
+<form id="filter-form" hx-get="/api/playbooks-table" hx-target="#playbook-tbody" hx-push-url="true">
+    <div class="filters">
+        <input type="text" name="search" placeholder="Search playbook_id, session_id, scenario..."
+               value="{{ current_filters.search }}"
+               hx-get="/api/playbooks-table" hx-trigger="keyup changed delay:300ms" hx-target="#playbook-tbody" hx-push-url="true">
+
+        <select name="scenario">
+            <option value="">All Scenarios</option>
+            {% for s in filters.scenarios %}
+            <option value="{{ s }}" {% if s == current_filters.scenario %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="subtype">
+            <option value="">All Subtypes</option>
+            {% for s in filters.subtypes %}
+            <option value="{{ s }}" {% if s == current_filters.subtype %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="has_order">
+            <option value="">All Orders</option>
+            <option value="true" {% if current_filters.has_order == "true" %}selected{% endif %}>Has Order</option>
+            <option value="false" {% if current_filters.has_order == "false" %}selected{% endif %}>No Order</option>
+        </select>
+
+        <select name="sentiment">
+            <option value="">All Sentiments</option>
+            {% for s in filters.sentiments %}
+            <option value="{{ s }}" {% if s == current_filters.sentiment %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+
+        <button type="button" onclick="window.location='/'">Reset</button>
+    </div>
+</form>
+
+<p id="total-count">Total: <strong>{{ total }}</strong> playbooks</p>
+
+<table id="playbook-list">
     <thead>
         <tr>
             <th>Playbook ID</th>
@@ -18,7 +56,7 @@
             <th>Amount</th>
         </tr>
     </thead>
-    <tbody>
+    <tbody id="playbook-tbody">
         {% for p in playbooks %}
         <tr onclick="window.location='/playbook/{{ p.playbook_id }}'" style="cursor: pointer;">
             <td><code>{{ p.playbook_id }}</code></td>
@@ -31,5 +69,18 @@
         </tr>
         {% endfor %}
     </tbody>
+    <tfoot>
+        <tr>
+            <td colspan="7" style="text-align: center;">
+                <span>Total: {{ total }} | Page {{ page }}/{{ total_pages }}</span>
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}">Prev</a>
+                {% endif %}
+                {% if page < total_pages %}
+                <a href="?page={{ page + 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}">Next</a>
+                {% endif %}
+            </td>
+        </tr>
+    </tfoot>
 </table>
 {% endblock %}

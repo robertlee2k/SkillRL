@@ -1,0 +1,27 @@
+<!-- HTMX partial: playbook table -->
+<tbody id="playbook-tbody">
+    {% for p in playbooks %}
+    <tr onclick="window.location='/playbook/{{ p.playbook_id }}'" style="cursor: pointer;">
+        <td><code>{{ p.playbook_id }}</code></td>
+        <td><code>{{ p.session_id }}</code></td>
+        <td>{{ p.scenario }}</td>
+        <td>{{ p.subtype }}</td>
+        <td>{{ p.nodes|length }}</td>
+        <td>{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
+        <td>{{ p.business_outcome.order_amount }}</td>
+    </tr>
+    {% endfor %}
+</tbody>
+<tfoot id="playbook-tfoot">
+    <tr>
+        <td colspan="7" style="text-align: center;">
+            <span>Total: {{ total }} | Page {{ page }}/{{ total_pages }}</span>
+            {% if page > 1 %}
+            <button hx-get="" hx-vals='{"page": {{ page - 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML">Prev</button>
+            {% endif %}
+            {% if page < total_pages %}
+            <button hx-get="" hx-vals='{"page": {{ page + 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML">Next</button>
+            {% endif %}
+        </td>
+    </tr>
+</tfoot>
