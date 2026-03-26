@@ -183,6 +183,28 @@ def customer_service_projection(
         original_action = action
         extracted_skill: Optional[str] = None
 
+        # Format validation: enforce thinking process before action
+        # This prevents reward hacking where model skips thinking to maximize reward
+        think_start_tag = "<tool_call>"
+        think_end_tag = "</think>"
+        think_start = think_start_tag in action
+        think_end = think_end_tag in action
+
+        if not (think_start and think_end):
+            results.append(INVALID_ACTION)
+            valids[i] = 0
+            logger.warning(f"[projection] Format breached (missing think tags): {original_action[:80]}...")
+            continue
+
+        # Ensure action tag comes AFTER thinking process ends
+        think_end_idx = action.find(think_end_tag)
+        action_start_idx = action.find("<action>")
+        if action_start_idx != -1 and action_start_idx < think_end_idx:
+            results.append(INVALID_ACTION)
+            valids[i] = 0
+            logger.warning(f"[projection] Format breached (action before think end): {original_action[:80]}...")
+            continue
+
         # Step 1: Try to extract from <action>...</action> block
         match = re_action_block.search(action)
         if match:
