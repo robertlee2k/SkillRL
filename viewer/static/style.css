@@ -62,3 +62,88 @@ code {
 table tfoot td {
     border-top: 2px solid #ddd;
 }
+
+/* Detail page layout */
+.detail-layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.meta {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: #f9f9f9;
+    border-radius: 4px;
+}
+
+.node-detail {
+    background: #f9f9f9;
+    padding: 1rem;
+    border-radius: 4px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.node-detail .hint {
+    color: #888;
+}
+
+.node-detail .buyer-text {
+    background: #fff;
+    padding: 0.5rem;
+    border-radius: 4px;
+    border-left: 3px solid #4caf50;
+}
+
+/* Session timeline */
+.session-timeline {
+    margin-top: 2rem;
+    border-top: 2px solid #ddd;
+    padding-top: 1rem;
+}
+
+.messages {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.message {
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    border-radius: 8px;
+    max-width: 80%;
+}
+
+.message.buyer {
+    background: #e3f2fd;
+    margin-right: auto;
+}
+
+.message.assistant, .message.qa, .message.system {
+    background: #f5f5f5;
+    margin-left: auto;
+}
+
+.msg-header {
+    font-size: 0.8em;
+    color: #666;
+    margin-bottom: 0.25rem;
+}
+
+.sender {
+    font-weight: bold;
+    margin-right: 0.5rem;
+}
+
+.time {
+    color: #999;
+}
+
+.msg-content {
+    word-break: break-word;
+}

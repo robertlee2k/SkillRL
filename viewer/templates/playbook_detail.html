@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}{{ playbook.playbook_id }} - Playbook Viewer{% endblock %}
+
+{% block content %}
+<a href="/">← Back to list</a>
+
+<h1>Playbook: {{ playbook.playbook_id }}</h1>
+<div class="meta">
+    <span>Session: <code>{{ playbook.session_id }}</code></span>
+    <span>Scenario: <strong>{{ playbook.scenario }}</strong></span>
+    <span>Subtype: {{ playbook.subtype }}</span>
+    <span>Has Order: <strong>{{ "Yes" if playbook.business_outcome.has_order else "No" }}</strong></span>
+    {% if playbook.business_outcome.has_order %}
+    <span>Amount: {{ playbook.business_outcome.order_amount }}</span>
+    {% endif %}
+</div>
+
+<div class="detail-layout">
+    <div class="flow-chart">
+        <h2>State Flow</h2>
+        <div id="network" style="height: 500px; border: 1px solid #ddd;"></div>
+    </div>
+
+    <div class="node-detail" id="node-detail">
+        <h2>Node Detail</h2>
+        <p class="hint">Click a node in the flow chart to see details</p>
+    </div>
+</div>
+
+{% if session %}
+<div class="session-timeline">
+    <h2>Original Session ({{ session.message_count }} messages)</h2>
+    <div class="messages">
+        {% for msg in session.messages %}
+        <div class="message {{ msg.sent_by|lower }}">
+            <div class="msg-header">
+                <span class="sender">{{ msg.sent_by }}</span>
+                <span class="time">{{ msg.sent_at }}</span>
+            </div>
+            <div class="msg-content">
+                {% if msg.format == "IMAGE" %}
+                <img src="{{ msg.content }}" alt="image" style="max-width: 200px; max-height: 150px;">
+                {% else %}
+                {{ msg.content }}
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- vis.js -->
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script>
+const playbookData = {{ playbook.model_dump() | tojson }};
+
+// 构建节点和边
+const nodes = new vis.DataSet(
+    Object.entries(playbookData.nodes).map(([name, node]) => {
+        let color = {background: '#fff', border: '#666'};
+        if (name === 'root') color = {background: '#e8f5e9', border: '#4caf50'};
+        else if (name === 'terminal') color = {background: '#ffebee', border: '#f44336'};
+        else if (name.startsWith('fallback')) color = {background: '#fff3e0', border: '#ff9800'};
+
+        return {
+            id: name,
+            label: name,
+            color: color,
+            font: {size: 14},
+            shadow: true,
+        };
+    })
+);
+
+const edges = [];
+Object.entries(playbookData.nodes).forEach(([from, node]) => {
+    Object.entries(node.transitions || {}).forEach(([skill, to]) => {
+        edges.push({
+            from: from,
+            to: to,
+            label: skill,
+            arrows: 'to',
+            smooth: {type: 'curvedCW', roundness: 0.2},
+        });
+    });
+});
+
+const container = document.getElementById('network');
+const data = {nodes, edges: new vis.DataSet(edges)};
+const options = {
+    physics: {
+        stabilization: true,
+        barnesHut: {gravitationalConstant: -2000}
+    },
+    interaction: {hover: true}
+};
+
+const network = new vis.Network(container, data, options);
+
+// 点击节点显示详情
+network.on('click', function(params) {
+    if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = playbookData.nodes[nodeId];
+        showNodeDetail(nodeId, node);
+    }
+});
+
+function showNodeDetail(nodeId, node) {
+    const detail = document.getElementById('node-detail');
+    detail.innerHTML = `
+        <h3>${nodeId}</h3>
+        <p><strong>Buyer Text:</strong></p>
+        <p class="buyer-text">${node.buyer_text || 'N/A'}</p>
+        <p><strong>Sentiment:</strong> ${node.sentiment}</p>
+        <p><strong>Available Skills:</strong></p>
+        <ul>${node.available_skills.map(s => `<li>${s}</li>`).join('')}</ul>
+        <p><strong>Transitions:</strong></p>
+        <ul>${Object.entries(node.transitions || {}).map(([k, v]) => `<li>${k} → ${v}</li>`).join('')}</ul>
+        <p><strong>Slot Updates:</strong> ${JSON.stringify(node.slot_updates)}</p>
+        <p><strong>Default Fallback:</strong> ${node.default_fallback || 'None'}</p>
+    `;
+}
+</script>
+{% endblock %}

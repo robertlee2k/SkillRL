@@ -142,3 +142,40 @@ def filter_playbooks(
     end = start + PAGE_SIZE
 
     return playbooks[start:end], total
+
+
+@router.get("/playbook/{playbook_id}", response_class=HTMLResponse)
+async def playbook_detail(request: Request, playbook_id: str):
+    """Playbook 详情页"""
+    playbook = data_loader.get_playbook(playbook_id)
+    if not playbook:
+        return HTMLResponse(content="Playbook not found", status_code=404)
+
+    session = data_loader.get_session(playbook.session_id)
+
+    return templates.TemplateResponse(
+        "playbook_detail.html",
+        {
+            "request": request,
+            "playbook": playbook,
+            "session": session,
+        }
+    )
+
+
+@router.get("/api/playbook/{playbook_id}")
+async def get_playbook(playbook_id: str):
+    """获取 playbook 数据 (API)"""
+    playbook = data_loader.get_playbook(playbook_id)
+    if not playbook:
+        return {"error": "not found"}
+    return playbook.model_dump()
+
+
+@router.get("/api/session/{session_id}")
+async def get_session(session_id: str):
+    """获取 session 数据 (API)"""
+    session = data_loader.get_session(session_id)
+    if not session:
+        return {"error": "not found"}
+    return session.model_dump()
