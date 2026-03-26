@@ -57,6 +57,7 @@
 const playbookData = {{ playbook.model_dump() | tojson }};
 
 // Build node levels using BFS from root
+// Properly handles unreachable nodes (like fallback_common) by placing them near their targets
 function buildNodeLevels(nodes) {
     const levels = {};
     const queue = ['root'];
@@ -65,6 +66,7 @@ function buildNodeLevels(nodes) {
     levels['root'] = 0;
     visited.add('root');
 
+    // First pass: BFS from root to find reachable nodes
     while (queue.length > 0) {
         const currentNode = queue.shift();
         const currentLevel = levels[currentNode];
@@ -75,18 +77,37 @@ function buildNodeLevels(nodes) {
                     visited.add(target);
                     levels[target] = currentLevel + 1;
                     queue.push(target);
-                } else {
-                    // For already visited nodes, potentially update level if we found a longer path
-                    // This helps with nodes that can be reached from multiple paths
                 }
             }
         }
     }
 
-    // Handle nodes not reachable from root (fallback nodes, etc.)
-    for (const nodeName of Object.keys(nodes)) {
-        if (!(nodeName in levels)) {
-            levels[nodeName] = 100; // Put unreachable nodes at bottom
+    // Find max level from reachable nodes
+    const maxReachableLevel = Math.max(...Object.values(levels));
+
+    // Second pass: place unreachable nodes near their targets
+    const unreachableNodes = Object.keys(nodes).filter(name => !(name in levels));
+
+    for (const nodeName of unreachableNodes) {
+        const node = nodes[nodeName];
+        const targets = node.transitions ? Object.values(node.transitions) : [];
+
+        if (targets.length > 0) {
+            // Find the minimum level among targets
+            const targetLevels = targets
+                .filter(t => t in levels)
+                .map(t => levels[t]);
+
+            if (targetLevels.length > 0) {
+                // Place this node at the same level as its first target (or one level before)
+                levels[nodeName] = Math.min(...targetLevels);
+            } else {
+                // Targets are also unreachable, place at bottom
+                levels[nodeName] = maxReachableLevel + 1;
+            }
+        } else {
+            // No transitions, place at bottom
+            levels[nodeName] = maxReachableLevel + 1;
         }
     }
 
