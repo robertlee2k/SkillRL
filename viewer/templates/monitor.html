@@ -95,7 +95,7 @@ async function loadStats() {
                     return `<div class="bar-row"><span title="${skill}">${skill}</span><div class="bar" style="width: ${count / maxCount * 100}%"></div><span>${count}</span></div>`;
                 })
                 .join('')
-            : '<p style="color: var(--text-muted)">No skills found</p>';
+            : '<p style="color: #6b7280">No skills found</p>';
         document.getElementById('top-skills').innerHTML = skillsHtml;
     } catch (e) {
         console.error('Failed to load stats:', e);
@@ -111,14 +111,14 @@ async function loadTrainingStatus() {
         document.getElementById('status-log-dir').textContent = data.log_dir;
         document.getElementById('status-step').textContent = data.current_step?.toLocaleString() || 'N/A';
         document.getElementById('status-exists').textContent = data.log_exists ? 'Yes' : 'No';
-        document.getElementById('status-exists').style.color = data.log_exists ? 'var(--accent-green)' : 'var(--accent-red)';
+        document.getElementById('status-exists').style.color = data.log_exists ? '#10b981' : '#f43f5e';
 
         // Recent metrics
         if (data.recent_metrics && data.recent_metrics.length > 0) {
             const metricsHtml = data.recent_metrics.slice(-5).map(m =>
-                `<div class="metric-item"><strong>${m.tag}:</strong> ${m.value?.toFixed(4) || 'N/A'} <span style="color: var(--text-muted)">(step ${m.step})</span></div>`
+                `<div class="metric-item"><strong>${m.tag}:</strong> ${m.value?.toFixed(4) || 'N/A'} <span style="color: #6b7280">(step ${m.step})</span></div>`
             ).join('');
-            document.getElementById('recent-metrics').innerHTML = '<h3 style="color: var(--text-primary); margin-bottom: 0.5rem">Recent Metrics</h3>' + metricsHtml;
+            document.getElementById('recent-metrics').innerHTML = '<h3 style="color: #f0f2f5; margin-bottom: 0.5rem">Recent Metrics</h3>' + metricsHtml;
         } else {
             document.getElementById('recent-metrics').innerHTML = '';
         }
@@ -128,7 +128,7 @@ async function loadTrainingStatus() {
             const pbHtml = data.recent_playbooks.slice(0, 5).map(pb =>
                 `<div class="metric-item"><a href="/playbook/${pb.playbook_id}">${pb.playbook_id}</a></div>`
             ).join('');
-            document.getElementById('recent-playbooks').innerHTML = '<h3 style="color: var(--text-primary); margin-bottom: 0.5rem">Recent Playbooks</h3>' + pbHtml;
+            document.getElementById('recent-playbooks').innerHTML = '<h3 style="color: #f0f2f5; margin-bottom: 0.5rem">Recent Playbooks</h3>' + pbHtml;
         } else {
             document.getElementById('recent-playbooks').innerHTML = '';
         }

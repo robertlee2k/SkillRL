@@ -10,7 +10,7 @@
     <span>Session: <code>{{ playbook.session_id }}</code></span>
     <span>Scenario: <strong>{{ playbook.scenario }}</strong></span>
     <span>Subtype: {{ playbook.subtype }}</span>
-    <span>Has Order: <strong style="color: {% if playbook.business_outcome.has_order %}var(--accent-green){% else %}var(--text-secondary){% endif %}">{{ "Yes" if playbook.business_outcome.has_order else "No" }}</strong></span>
+    <span>Has Order: <strong style="color: {% if playbook.business_outcome.has_order %}#10b981{% else %}#6b7280{% endif %}">{{ "Yes" if playbook.business_outcome.has_order else "No" }}</strong></span>
     {% if playbook.business_outcome.has_order %}
     <span>Amount: <strong>¥{{ playbook.business_outcome.order_amount }}</strong></span>
     {% endif %}
@@ -119,31 +119,31 @@ const nodeLevels = buildNodeLevels(playbookData.nodes);
 // Build nodes with level-based positioning
 const nodesArray = Object.entries(playbookData.nodes).map(([name, node]) => {
     let color = {
-        background: '#21262d',
-        border: '#8b949e',
-        highlight: { background: '#30363d', border: '#58a6ff' }
+        background: '#2a3142',
+        border: '#6b7280',
+        highlight: { background: '#3a4252', border: '#f59e0b' }
     };
     let borderWidth = 2;
 
     if (name === 'root') {
         color = {
-            background: '#238636',
-            border: '#3fb950',
-            highlight: { background: '#2ea043', border: '#56d364' }
+            background: '#1a3a2a',
+            border: '#10b981',
+            highlight: { background: '#1f4a35', border: '#34d399' }
         };
         borderWidth = 3;
     } else if (name === 'terminal') {
         color = {
-            background: '#b62324',
-            border: '#f85149',
-            highlight: { background: '#da3633', border: '#ff7b72' }
+            background: '#3a1a1a',
+            border: '#f43f5e',
+            highlight: { background: '#4a2525', border: '#fb7185' }
         };
         borderWidth = 3;
     } else if (name.startsWith('fallback')) {
         color = {
-            background: '#4d2d00',
-            border: '#d29922',
-            highlight: { background: '#6e4100', border: '#e3b341' }
+            background: '#3a2a1a',
+            border: '#f59e0b',
+            highlight: { background: '#4a3520', border: '#fbbf24' }
         };
         borderWidth = 2;
     }
@@ -155,19 +155,20 @@ const nodesArray = Object.entries(playbookData.nodes).map(([name, node]) => {
         color: color,
         borderWidth: borderWidth,
         font: {
-            color: '#e6edf3',
-            size: 13,
-            face: 'JetBrains Mono, monospace'
+            color: '#f0f2f5',
+            size: 12,
+            face: 'Space Grotesk, sans-serif',
+            weight: '500'
         },
         shape: 'box',
-        borderRadius: 6,
-        margin: 8,
+        borderRadius: 8,
+        margin: 10,
         shadow: {
             enabled: true,
-            color: 'rgba(0,0,0,0.3)',
-            size: 8,
+            color: 'rgba(0,0,0,0.4)',
+            size: 12,
             x: 0,
-            y: 2
+            y: 3
         }
     };
 });
@@ -181,9 +182,9 @@ Object.entries(playbookData.nodes).forEach(([from, node]) => {
             to: to,
             label: skill,
             arrows: { to: { enabled: true, scaleFactor: 0.8 } },
-            color: { color: '#8b949e', highlight: '#58a6ff' },
+            color: { color: '#6b7280', highlight: '#f59e0b' },
             font: {
-                color: '#8b949e',
+                color: '#9ca3b4',
                 size: 10,
                 face: 'JetBrains Mono, monospace',
                 strokeWidth: 0
@@ -298,9 +299,9 @@ function showNodeDetail(nodeId, node) {
 
 function getSentimentColor(sentiment) {
     switch(sentiment) {
-        case 'positive': return 'var(--accent-green)';
-        case 'negative': return 'var(--accent-red)';
-        default: return 'var(--text-secondary)';
+        case 'positive': return '#10b981';
+        case 'negative': return '#f43f5e';
+        default: return '#6b7280';
     }
 }
 </script>

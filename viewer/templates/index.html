@@ -64,7 +64,7 @@
             <td>{{ p.scenario }}</td>
             <td>{{ p.subtype }}</td>
             <td>{{ p.nodes|length }}</td>
-            <td style="color: {% if p.business_outcome.has_order %}var(--accent-green){% else %}var(--text-muted){% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
+            <td style="color: {% if p.business_outcome.has_order %}#10b981{% else %}#6b7280{% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
             <td>¥{{ p.business_outcome.order_amount }}</td>
         </tr>
         {% endfor %}
@@ -72,7 +72,7 @@
     <tfoot>
         <tr>
             <td colspan="7">
-                <span style="color: var(--text-secondary)">Total: <strong style="color: var(--text-primary)">{{ total }}</strong> | Page <strong style="color: var(--text-primary)">{{ page }}</strong> / <strong style="color: var(--text-primary)">{{ total_pages }}</strong></span>
+                <span style="color: #6b7280">Total: <strong style="color: #f0f2f5">{{ total }}</strong> | Page <strong style="color: #f0f2f5">{{ page }}</strong> / <strong style="color: #f0f2f5">{{ total_pages }}</strong></span>
                 {% if page > 1 %}
                 <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}" style="margin-left: 1rem">← Prev</a>
                 {% endif %}
