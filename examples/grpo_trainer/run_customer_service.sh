@@ -30,13 +30,13 @@ export WANDB_NAME="customer_service_grpo_baseline"
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
-train_data_size=16   # Number of training episodes per batch
-val_data_size=64     # Number of validation episodes
+train_data_size=128   # Number of training episodes per batch
+val_data_size=256     # Number of validation episodes
 group_size=8         # Parallel rollouts per episode
 
 # 预处理客服场景数据
 python3 scripts/prepare_cs_data.py \
-    --playbook_path outputs/playbooks_new.json \
+    --playbook_path outputs/playbooks_full.json \
     --output_dir $HOME/data/verl-agent/customer_service \
     --train_data_size $train_data_size \
     --val_data_size $val_data_size
