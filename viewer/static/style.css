@@ -147,3 +147,102 @@ table tfoot td {
 .msg-content {
     word-break: break-word;
 }
+
+/* Monitor page */
+.config-section {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: #f0f0f0;
+    border-radius: 4px;
+}
+
+.config-section label {
+    font-weight: bold;
+}
+
+.training-status {
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: #f9f9f9;
+    border-radius: 8px;
+}
+
+.status-grid {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1rem;
+}
+
+.status-item .label {
+    font-weight: bold;
+    margin-right: 0.5rem;
+}
+
+.metric-item {
+    padding: 0.25rem 0;
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: #f9f9f9;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.stat-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.stat-value {
+    font-size: 2em;
+    font-weight: bold;
+}
+
+.charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+}
+
+.chart-section {
+    background: #f9f9f9;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.bar-row {
+    display: flex;
+    align-items: center;
+    margin: 0.5rem 0;
+    gap: 0.5rem;
+}
+
+.bar-row span:first-child {
+    width: 150px;
+    font-size: 0.9em;
+}
+
+.bar {
+    height: 20px;
+    background: #4caf50;
+    border-radius: 4px;
+    min-width: 2px;
+}
+
+.bar-row span:last-child {
+    width: 50px;
+    text-align: right;
+    font-size: 0.9em;
+    color: #666;
+}
