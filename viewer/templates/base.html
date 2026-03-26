@@ -5,13 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Playbook Viewer{% endblock %}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <nav>
-        <a href="/">Playbooks</a>
-        <a href="/monitor">Monitor</a>
+        <div class="nav-brand">
+            <span class="logo">◈</span>
+            <span class="brand-text">Playbook Viewer</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Playbooks</a>
+            <a href="/monitor" class="{% if request.url.path == '/monitor' %}active{% endif %}">Monitor</a>
+        </div>
     </nav>
     <main>
         {% block content %}{% endblock %}

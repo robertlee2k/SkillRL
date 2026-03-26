@@ -1,26 +1,26 @@
 <!-- HTMX partial: playbook table -->
 <tbody id="playbook-tbody">
     {% for p in playbooks %}
-    <tr onclick="window.location='/playbook/{{ p.playbook_id }}'" style="cursor: pointer;">
+    <tr onclick="window.location='/playbook/{{ p.playbook_id }}'">
         <td><code>{{ p.playbook_id }}</code></td>
         <td><code>{{ p.session_id }}</code></td>
         <td>{{ p.scenario }}</td>
         <td>{{ p.subtype }}</td>
         <td>{{ p.nodes|length }}</td>
-        <td>{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
-        <td>{{ p.business_outcome.order_amount }}</td>
+        <td style="color: {% if p.business_outcome.has_order %}var(--accent-green){% else %}var(--text-muted){% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
+        <td>¥{{ p.business_outcome.order_amount }}</td>
     </tr>
     {% endfor %}
 </tbody>
 <tfoot id="playbook-tfoot">
     <tr>
-        <td colspan="7" style="text-align: center;">
-            <span>Total: {{ total }} | Page {{ page }}/{{ total_pages }}</span>
+        <td colspan="7">
+            <span style="color: var(--text-secondary)">Total: <strong style="color: var(--text-primary)">{{ total }}</strong> | Page <strong style="color: var(--text-primary)">{{ page }}</strong> / <strong style="color: var(--text-primary)">{{ total_pages }}</strong></span>
             {% if page > 1 %}
-            <button hx-get="" hx-vals='{"page": {{ page - 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML">Prev</button>
+            <button hx-get="" hx-vals='{"page": {{ page - 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML" style="margin-left: 1rem">← Prev</button>
             {% endif %}
             {% if page < total_pages %}
-            <button hx-get="" hx-vals='{"page": {{ page + 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML">Next</button>
+            <button hx-get="" hx-vals='{"page": {{ page + 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML">Next →</button>
             {% endif %}
         </td>
     </tr>

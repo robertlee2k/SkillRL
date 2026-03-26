@@ -5,21 +5,21 @@
 {% block content %}
 <a href="/">← Back to list</a>
 
-<h1>Playbook: {{ playbook.playbook_id }}</h1>
+<h1>Playbook: <code>{{ playbook.playbook_id }}</code></h1>
 <div class="meta">
     <span>Session: <code>{{ playbook.session_id }}</code></span>
     <span>Scenario: <strong>{{ playbook.scenario }}</strong></span>
     <span>Subtype: {{ playbook.subtype }}</span>
-    <span>Has Order: <strong>{{ "Yes" if playbook.business_outcome.has_order else "No" }}</strong></span>
+    <span>Has Order: <strong style="color: {% if playbook.business_outcome.has_order %}var(--accent-green){% else %}var(--text-secondary){% endif %}">{{ "Yes" if playbook.business_outcome.has_order else "No" }}</strong></span>
     {% if playbook.business_outcome.has_order %}
-    <span>Amount: {{ playbook.business_outcome.order_amount }}</span>
+    <span>Amount: <strong>¥{{ playbook.business_outcome.order_amount }}</strong></span>
     {% endif %}
 </div>
 
 <div class="detail-layout">
     <div class="flow-chart">
-        <h2>State Flow</h2>
-        <div id="network" style="height: 500px; border: 1px solid #ddd;"></div>
+        <h2>State Flow Diagram</h2>
+        <div id="network"></div>
     </div>
 
     <div class="node-detail" id="node-detail">
@@ -40,7 +40,7 @@
             </div>
             <div class="msg-content">
                 {% if msg.format == "IMAGE" %}
-                <img src="{{ msg.content }}" alt="image" style="max-width: 200px; max-height: 150px;">
+                <img src="{{ msg.content }}" alt="image">
                 {% else %}
                 {{ msg.content }}
                 {% endif %}
@@ -56,50 +56,176 @@
 <script>
 const playbookData = {{ playbook.model_dump() | tojson }};
 
-// 构建节点和边
-const nodes = new vis.DataSet(
-    Object.entries(playbookData.nodes).map(([name, node]) => {
-        let color = {background: '#fff', border: '#666'};
-        if (name === 'root') color = {background: '#e8f5e9', border: '#4caf50'};
-        else if (name === 'terminal') color = {background: '#ffebee', border: '#f44336'};
-        else if (name.startsWith('fallback')) color = {background: '#fff3e0', border: '#ff9800'};
+// Build node levels using BFS from root
+function buildNodeLevels(nodes) {
+    const levels = {};
+    const queue = ['root'];
+    const visited = new Set();
 
-        return {
-            id: name,
-            label: name,
-            color: color,
-            font: {size: 14},
-            shadow: true,
+    levels['root'] = 0;
+    visited.add('root');
+
+    while (queue.length > 0) {
+        const currentNode = queue.shift();
+        const currentLevel = levels[currentNode];
+
+        if (nodes[currentNode] && nodes[currentNode].transitions) {
+            for (const target of Object.values(nodes[currentNode].transitions)) {
+                if (!visited.has(target)) {
+                    visited.add(target);
+                    levels[target] = currentLevel + 1;
+                    queue.push(target);
+                } else {
+                    // For already visited nodes, potentially update level if we found a longer path
+                    // This helps with nodes that can be reached from multiple paths
+                }
+            }
+        }
+    }
+
+    // Handle nodes not reachable from root (fallback nodes, etc.)
+    for (const nodeName of Object.keys(nodes)) {
+        if (!(nodeName in levels)) {
+            levels[nodeName] = 100; // Put unreachable nodes at bottom
+        }
+    }
+
+    return levels;
+}
+
+const nodeLevels = buildNodeLevels(playbookData.nodes);
+
+// Build nodes with level-based positioning
+const nodesArray = Object.entries(playbookData.nodes).map(([name, node]) => {
+    let color = {
+        background: '#21262d',
+        border: '#8b949e',
+        highlight: { background: '#30363d', border: '#58a6ff' }
+    };
+    let borderWidth = 2;
+
+    if (name === 'root') {
+        color = {
+            background: '#238636',
+            border: '#3fb950',
+            highlight: { background: '#2ea043', border: '#56d364' }
         };
-    })
-);
+        borderWidth = 3;
+    } else if (name === 'terminal') {
+        color = {
+            background: '#b62324',
+            border: '#f85149',
+            highlight: { background: '#da3633', border: '#ff7b72' }
+        };
+        borderWidth = 3;
+    } else if (name.startsWith('fallback')) {
+        color = {
+            background: '#4d2d00',
+            border: '#d29922',
+            highlight: { background: '#6e4100', border: '#e3b341' }
+        };
+        borderWidth = 2;
+    }
 
-const edges = [];
+    return {
+        id: name,
+        label: name,
+        level: nodeLevels[name],
+        color: color,
+        borderWidth: borderWidth,
+        font: {
+            color: '#e6edf3',
+            size: 13,
+            face: 'JetBrains Mono, monospace'
+        },
+        shape: 'box',
+        borderRadius: 6,
+        margin: 8,
+        shadow: {
+            enabled: true,
+            color: 'rgba(0,0,0,0.3)',
+            size: 8,
+            x: 0,
+            y: 2
+        }
+    };
+});
+
+// Build edges
+const edgesArray = [];
 Object.entries(playbookData.nodes).forEach(([from, node]) => {
     Object.entries(node.transitions || {}).forEach(([skill, to]) => {
-        edges.push({
+        edgesArray.push({
             from: from,
             to: to,
             label: skill,
-            arrows: 'to',
-            smooth: {type: 'curvedCW', roundness: 0.2},
+            arrows: { to: { enabled: true, scaleFactor: 0.8 } },
+            color: { color: '#8b949e', highlight: '#58a6ff' },
+            font: {
+                color: '#8b949e',
+                size: 10,
+                face: 'JetBrains Mono, monospace',
+                strokeWidth: 0
+            },
+            smooth: {
+                type: 'cubicBezier',
+                roundness: 0.5
+            },
+            width: 1.5
         });
     });
 });
 
 const container = document.getElementById('network');
-const data = {nodes, edges: new vis.DataSet(edges)};
+const data = {
+    nodes: new vis.DataSet(nodesArray),
+    edges: new vis.DataSet(edgesArray)
+};
+
 const options = {
-    physics: {
-        stabilization: true,
-        barnesHut: {gravitationalConstant: -2000}
+    layout: {
+        hierarchical: {
+            enabled: true,
+            direction: 'UD',
+            sortMethod: 'directed',
+            levelSeparation: 120,
+            nodeSpacing: 150,
+            treeSpacing: 200,
+            blockShifting: true,
+            edgeMinimization: true,
+            parentCentralization: true
+        }
     },
-    interaction: {hover: true}
+    physics: {
+        enabled: false
+    },
+    interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        zoomView: true,
+        dragView: true
+    },
+    nodes: {
+        borderWidthSelected: 3
+    },
+    edges: {
+        selectionWidth: 2
+    }
 };
 
 const network = new vis.Network(container, data, options);
 
-// 点击节点显示详情
+// Fit view after stabilization
+network.once('stabilized', function() {
+    network.fit({
+        animation: {
+            duration: 500,
+            easingFunction: 'easeOutQuad'
+        }
+    });
+});
+
+// Click handler for node details
 network.on('click', function(params) {
     if (params.nodes.length > 0) {
         const nodeId = params.nodes[0];
@@ -108,20 +234,53 @@ network.on('click', function(params) {
     }
 });
 
+// Hover effect
+network.on('hoverNode', function(params) {
+    container.style.cursor = 'pointer';
+});
+
+network.on('blurNode', function(params) {
+    container.style.cursor = 'default';
+});
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+
 function showNodeDetail(nodeId, node) {
     const detail = document.getElementById('node-detail');
+
+    const transitionsHtml = Object.entries(node.transitions || {})
+        .map(([skill, target]) => `<li><code>${escapeHtml(skill)}</code> → <code>${escapeHtml(target)}</code></li>`)
+        .join('');
+
+    const skillsHtml = (node.available_skills || [])
+        .map(s => `<li><code>${escapeHtml(s)}</code></li>`)
+        .join('');
+
     detail.innerHTML = `
-        <h3>${nodeId}</h3>
+        <h3>${escapeHtml(nodeId)}</h3>
         <p><strong>Buyer Text:</strong></p>
-        <p class="buyer-text">${node.buyer_text || 'N/A'}</p>
-        <p><strong>Sentiment:</strong> ${node.sentiment}</p>
+        <p class="buyer-text">${escapeHtml(node.buyer_text) || '<em>N/A</em>'}</p>
+        <p><strong>Sentiment:</strong> <span style="color: ${getSentimentColor(node.sentiment)}">${escapeHtml(node.sentiment) || 'N/A'}</span></p>
         <p><strong>Available Skills:</strong></p>
-        <ul>${node.available_skills.map(s => `<li>${s}</li>`).join('')}</ul>
+        <ul>${skillsHtml || '<li><em>None</em></li>'}</ul>
         <p><strong>Transitions:</strong></p>
-        <ul>${Object.entries(node.transitions || {}).map(([k, v]) => `<li>${k} → ${v}</li>`).join('')}</ul>
-        <p><strong>Slot Updates:</strong> ${JSON.stringify(node.slot_updates)}</p>
-        <p><strong>Default Fallback:</strong> ${node.default_fallback || 'None'}</p>
+        <ul>${transitionsHtml || '<li><em>None</em></li>'}</ul>
+        <p><strong>Slot Updates:</strong></p>
+        <p><code>${Object.keys(node.slot_updates || {}).length > 0 ? JSON.stringify(node.slot_updates) : '{}'}</code></p>
+        <p><strong>Default Fallback:</strong> <code>${escapeHtml(node.default_fallback) || 'None'}</code></p>
     `;
+}
+
+function getSentimentColor(sentiment) {
+    switch(sentiment) {
+        case 'positive': return 'var(--accent-green)';
+        case 'negative': return 'var(--accent-red)';
+        default: return 'var(--text-secondary)';
+    }
 }
 </script>
 {% endblock %}

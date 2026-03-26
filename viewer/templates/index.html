@@ -52,32 +52,32 @@
             <th>Scenario</th>
             <th>Subtype</th>
             <th>Nodes</th>
-            <th>Has Order</th>
+            <th>Order</th>
             <th>Amount</th>
         </tr>
     </thead>
     <tbody id="playbook-tbody">
         {% for p in playbooks %}
-        <tr onclick="window.location='/playbook/{{ p.playbook_id }}'" style="cursor: pointer;">
+        <tr onclick="window.location='/playbook/{{ p.playbook_id }}'">
             <td><code>{{ p.playbook_id }}</code></td>
             <td><code>{{ p.session_id }}</code></td>
             <td>{{ p.scenario }}</td>
             <td>{{ p.subtype }}</td>
             <td>{{ p.nodes|length }}</td>
-            <td>{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
-            <td>{{ p.business_outcome.order_amount }}</td>
+            <td style="color: {% if p.business_outcome.has_order %}var(--accent-green){% else %}var(--text-muted){% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
+            <td>¥{{ p.business_outcome.order_amount }}</td>
         </tr>
         {% endfor %}
     </tbody>
     <tfoot>
         <tr>
-            <td colspan="7" style="text-align: center;">
-                <span>Total: {{ total }} | Page {{ page }}/{{ total_pages }}</span>
+            <td colspan="7">
+                <span style="color: var(--text-secondary)">Total: <strong style="color: var(--text-primary)">{{ total }}</strong> | Page <strong style="color: var(--text-primary)">{{ page }}</strong> / <strong style="color: var(--text-primary)">{{ total_pages }}</strong></span>
                 {% if page > 1 %}
-                <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}">Prev</a>
+                <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}" style="margin-left: 1rem">← Prev</a>
                 {% endif %}
                 {% if page < total_pages %}
-                <a href="?page={{ page + 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}">Next</a>
+                <a href="?page={{ page + 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}" style="margin-left: 0.5rem">Next →</a>
                 {% endif %}
             </td>
         </tr>
