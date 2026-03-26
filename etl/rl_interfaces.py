@@ -185,7 +185,7 @@ def customer_service_projection(
 
         # Format validation: enforce thinking process before action
         # This prevents reward hacking where model skips thinking to maximize reward
-        think_start_tag = "halleball"
+        think_start_tag = "<think>"
         think_end_tag = "</think>"
         think_start = think_start_tag in action
         think_end = think_end_tag in action
