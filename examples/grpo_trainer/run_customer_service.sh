@@ -51,7 +51,8 @@ group_size=8         # Parallel rollouts per episode
 # 4. 启动 verl GRPO 训练
 # 【修改2：增加生成长度max_response_length，防止思考被截断】
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
-#  压住KL
+# 【修改4: 压住KL】
+#  【修改5: 改成bf16】
 # ==========================================
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -75,6 +76,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+    actor_rollout_ref.ref.fsdp_config.model_dtype=bf16 \
+    actor_rollout_ref.rollout.dtype=bfloat16 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
     actor_rollout_ref.rollout.name=$ENGINE \
