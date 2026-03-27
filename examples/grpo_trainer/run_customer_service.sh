@@ -53,7 +53,7 @@ group_size=8         # Parallel rollouts per episode
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
 # 【修改4: 压住KL】
 # 【修改5: 改成bf16】
-# 【修改6: prompt长度翻倍到8192】
+# 【修改6: prompt长度翻倍到8192， max_num_batched_tokens到16384】
 # ==========================================
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -88,7 +88,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=False \
-    actor_rollout_ref.rollout.max_num_batched_tokens=8192 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
     actor_rollout_ref.rollout.max_num_seqs=256 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
