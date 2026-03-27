@@ -236,7 +236,11 @@ class CustomerServiceEnv:
             'fell_back': self.state.fell_back,
             'sentiment': nodes.get(next_node, {}).get('sentiment', 'neutral'),
             'visited_nodes': len(self.state.visited_nodes),
-            'patience': self.state.patience
+            'patience': self.state.patience,
+            # 【新增：补齐框架需要的成功率与业务指标】
+            'won': self.state.won,
+            'scenario': self.state.scenario,
+            'business_outcome': self.current_playbook.get('business_outcome', {})
         }
 
         return observation, step_reward, self.state.done, info
