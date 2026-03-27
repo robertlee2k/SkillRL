@@ -429,14 +429,22 @@ class CustomerServicePromptBuilder:
 
         # Format dialogue history (full conversation for context)
         if dialogue_history and len(dialogue_history) > 0:
-            # Take last N turns (each turn = buyer + agent)
+            # Take last N turns
             recent_dialogue = dialogue_history[-(history_length * 2):]
             dialogue_lines = []
             for turn in recent_dialogue:
                 if turn['role'] == 'buyer':
                     dialogue_lines.append(f"买家: {turn['content']}")
+                elif turn['role'] == 'system':
+                    # 【修复1】正确剥离系统警告，不污染客服角色
+                    dialogue_lines.append(f"【系统警告】: {turn['content']}")
                 else:
-                    dialogue_lines.append(f"客服: {turn.get('content', turn.get('action', 'N/A'))}")
+                    # 【修复2】优雅处理非法动作的展示
+                    action_str = turn.get('action', 'N/A')
+                    if action_str == 'INVALID_ACTION':
+                        dialogue_lines.append(f"客服: [尝试了无效的动作]")
+                    else:
+                        dialogue_lines.append(f"客服: [Action: {action_str}]")
             dialogue_text = "\n".join(dialogue_lines)
 
             action_len = len(action_history) if action_history else 0
