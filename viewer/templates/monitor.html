@@ -9,55 +9,108 @@
     <label>Log Directory:</label>
     <input type="text" id="log-dir" value="{{ log_dir }}">
     <button onclick="updateLogDir()">Update</button>
+    <span id="log-status" style="margin-left: 1rem; color: #6b7280"></span>
 </div>
 
-<div class="training-status" id="training-status">
-    <h2>Training Status</h2>
-    <div class="status-grid">
-        <div class="status-item">
-            <span class="label">Log Dir:</span>
-            <span id="status-log-dir">-</span>
+<!-- 核心指标卡片 -->
+<div class="metrics-hero">
+    <div class="hero-card primary">
+        <div class="hero-label">Validation Success Rate</div>
+        <div class="hero-value" id="val-success-rate">-</div>
+        <div class="hero-trend" id="val-success-trend"></div>
+    </div>
+    <div class="hero-card">
+        <div class="hero-label">Test Score</div>
+        <div class="hero-value" id="val-test-score">-</div>
+        <div class="hero-trend" id="val-score-trend"></div>
+    </div>
+    <div class="hero-card">
+        <div class="hero-label">Episode Reward</div>
+        <div class="hero-value" id="episode-reward">-</div>
+        <div class="hero-sub">avg per episode</div>
+    </div>
+    <div class="hero-card">
+        <div class="hero-label">Valid Action Ratio</div>
+        <div class="hero-value" id="valid-action-ratio">-</div>
+        <div class="hero-sub">action validity</div>
+    </div>
+</div>
+
+<!-- 训练进度 -->
+<div class="progress-section">
+    <div class="progress-header">
+        <h2>Training Progress</h2>
+        <div class="progress-stats">
+            <span>Epoch: <strong id="current-epoch">-</strong></span>
+            <span>Step: <strong id="current-step">-</strong></span>
         </div>
-        <div class="status-item">
-            <span class="label">Current Step:</span>
-            <span id="status-step">-</span>
+    </div>
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar"></div>
+    </div>
+</div>
+
+<!-- 指标详情网格 -->
+<div class="metrics-grid">
+    <!-- 验证集指标 -->
+    <div class="metric-section">
+        <h3>Validation Metrics</h3>
+        <div class="metric-chart" id="val-metrics-chart"></div>
+        <div class="metric-details" id="val-details"></div>
+    </div>
+
+    <!-- Episode指标 -->
+    <div class="metric-section">
+        <h3>Episode Metrics</h3>
+        <div class="metric-chart" id="episode-metrics-chart"></div>
+        <div class="metric-details" id="episode-details"></div>
+    </div>
+
+    <!-- Actor Loss -->
+    <div class="metric-section">
+        <h3>Actor Losses</h3>
+        <div class="metric-chart" id="actor-metrics-chart"></div>
+        <div class="metric-details" id="actor-details"></div>
+    </div>
+
+    <!-- 性能指标 -->
+    <div class="metric-section">
+        <h3>Performance</h3>
+        <div class="metric-details" id="perf-details"></div>
+    </div>
+</div>
+
+<!-- Playbook统计 -->
+<div class="stats-section">
+    <h2>Playbook Statistics</h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Total Playbooks</h3>
+            <div class="stat-value" id="total-playbooks">-</div>
         </div>
-        <div class="status-item">
-            <span class="label">Log Exists:</span>
-            <span id="status-exists">-</span>
+        <div class="stat-card">
+            <h3>Order Rate</h3>
+            <div class="stat-value" id="order-rate">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Avg Nodes</h3>
+            <div class="stat-value" id="avg-nodes">-</div>
         </div>
     </div>
-    <div id="recent-metrics"></div>
-    <div id="recent-playbooks"></div>
-</div>
 
-<div class="stats-grid">
-    <div class="stat-card">
-        <h3>Total Playbooks</h3>
-        <div class="stat-value" id="total-playbooks">-</div>
-    </div>
-    <div class="stat-card">
-        <h3>Order Rate</h3>
-        <div class="stat-value" id="order-rate">-</div>
-    </div>
-    <div class="stat-card">
-        <h3>Avg Nodes</h3>
-        <div class="stat-value" id="avg-nodes">-</div>
+    <div class="charts">
+        <div class="chart-section">
+            <h2>Scenario Distribution</h2>
+            <div id="scenario-dist"></div>
+        </div>
+        <div class="chart-section">
+            <h2>Top 10 Skills</h2>
+            <div id="top-skills"></div>
+        </div>
     </div>
 </div>
 
-<div class="charts">
-    <div class="chart-section">
-        <h2>Scenario Distribution</h2>
-        <div id="scenario-dist"></div>
-    </div>
-
-    <div class="chart-section">
-        <h2>Top 10 Skills</h2>
-        <div id="top-skills"></div>
-    </div>
-</div>
-
+<!-- 刷新设置 -->
 <div class="config-section">
     <label>Refresh Interval:</label>
     <select id="refresh-interval">
@@ -66,10 +119,209 @@
         <option value="30000">30 seconds</option>
         <option value="60000">1 minute</option>
     </select>
+    <span id="last-refresh" style="margin-left: 1rem; color: #6b7280"></span>
 </div>
+
+<style>
+/* Hero metrics cards */
+.metrics-hero {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+}
+
+@media (max-width: 900px) {
+    .metrics-hero {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.hero-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 1.5rem;
+    text-align: center;
+    box-shadow: var(--shadow-md);
+    transition: all 0.3s var(--ease-out-quart);
+}
+
+.hero-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.hero-card.primary {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, var(--bg-secondary) 100%);
+    border-color: var(--border-accent);
+}
+
+.hero-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.hero-value {
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: 'Space Grotesk', sans-serif;
+    color: var(--accent-primary);
+    line-height: 1;
+}
+
+.hero-trend {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+}
+
+.hero-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* Progress section */
+.progress-section {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.progress-header h2 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.progress-stats {
+    display: flex;
+    gap: 1.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.progress-stats strong {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.progress-bar-container {
+    height: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-primary-dim));
+    border-radius: 4px;
+    width: 0%;
+    transition: width 0.5s var(--ease-out-expo);
+    box-shadow: 0 0 10px var(--accent-primary-glow);
+}
+
+/* Metrics grid */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+@media (max-width: 900px) {
+    .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.metric-section {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 1.25rem;
+}
+
+.metric-section h3 {
+    margin: 0 0 1rem 0;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.metric-chart {
+    min-height: 120px;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    padding: 0.5rem 0;
+}
+
+.metric-bar {
+    flex: 1;
+    background: linear-gradient(180deg, var(--accent-primary) 0%, var(--accent-primary-dim) 100%);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+    transition: height 0.3s var(--ease-out-quart);
+}
+
+.metric-details {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.metric-row:last-child {
+    border-bottom: none;
+}
+
+.metric-name {
+    color: var(--text-secondary);
+}
+
+.metric-value {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* Stats section */
+.stats-section {
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.stats-section h2 {
+    margin-bottom: 1.25rem;
+}
+</style>
 
 <script>
 let refreshIntervalId = null;
+let previousMetrics = {};
 
 async function loadStats() {
     try {
@@ -102,36 +354,116 @@ async function loadStats() {
     }
 }
 
+function formatMetricName(tag) {
+    // 移除前缀，格式化显示
+    const parts = tag.split('/');
+    const name = parts[parts.length - 1];
+    return name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function formatValue(value) {
+    if (value === null || value === undefined) return 'N/A';
+    if (Math.abs(value) < 0.01 && value !== 0) {
+        return value.toExponential(2);
+    }
+    return value.toFixed(4);
+}
+
+function renderMetricChart(history, containerId, color = '#f59e0b') {
+    const container = document.getElementById(containerId);
+    if (!history || history.length === 0) {
+        container.innerHTML = '<p style="color: #6b7280; text-align: center; padding: 2rem;">No data yet</p>';
+        return;
+    }
+
+    const values = history.map(h => h.value);
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const range = max - min || 1;
+
+    const barsHtml = values.map((v, i) => {
+        const height = ((v - min) / range * 100) || 2;
+        const opacity = 0.3 + (i / values.length) * 0.7;
+        return `<div class="metric-bar" style="height: ${height}%; background: ${color}; opacity: ${opacity}" title="step ${history[i].step}: ${v.toFixed(4)}"></div>`;
+    }).join('');
+
+    container.innerHTML = barsHtml;
+}
+
+function renderMetricDetails(metrics, containerId) {
+    const container = document.getElementById(containerId);
+    if (!metrics || Object.keys(metrics).length === 0) {
+        container.innerHTML = '<p style="color: #6b7280">No data</p>';
+        return;
+    }
+
+    const html = Object.entries(metrics).map(([tag, data]) => {
+        const name = formatMetricName(tag);
+        const value = data.current !== null ? formatValue(data.current) : 'N/A';
+        return `<div class="metric-row"><span class="metric-name">${name}</span><span class="metric-value">${value}</span></div>`;
+    }).join('');
+
+    container.innerHTML = html;
+}
+
 async function loadTrainingStatus() {
     try {
         const logDir = document.getElementById('log-dir').value;
         const resp = await fetch(`/api/monitor/training-status?log_dir=${encodeURIComponent(logDir)}`);
         const data = await resp.json();
 
-        document.getElementById('status-log-dir').textContent = data.log_dir;
-        document.getElementById('status-step').textContent = data.current_step?.toLocaleString() || 'N/A';
-        document.getElementById('status-exists').textContent = data.log_exists ? 'Yes' : 'No';
-        document.getElementById('status-exists').style.color = data.log_exists ? '#10b981' : '#f43f5e';
+        // 更新状态指示
+        document.getElementById('log-status').textContent = data.log_exists ? '✓ Connected' : '✗ Not found';
+        document.getElementById('log-status').style.color = data.log_exists ? '#10b981' : '#f43f5e';
 
-        // Recent metrics
-        if (data.recent_metrics && data.recent_metrics.length > 0) {
-            const metricsHtml = data.recent_metrics.slice(-5).map(m =>
-                `<div class="metric-item"><strong>${m.tag}:</strong> ${m.value?.toFixed(4) || 'N/A'} <span style="color: #6b7280">(step ${m.step})</span></div>`
-            ).join('');
-            document.getElementById('recent-metrics').innerHTML = '<h3 style="color: #f0f2f5; margin-bottom: 0.5rem">Recent Metrics</h3>' + metricsHtml;
-        } else {
-            document.getElementById('recent-metrics').innerHTML = '';
+        // 更新进度
+        document.getElementById('current-epoch').textContent = data.current_epoch ?? '-';
+        document.getElementById('current-step').textContent = data.current_step?.toLocaleString() ?? '-';
+
+        // 更新进度条（假设最大100个epoch）
+        if (data.current_epoch) {
+            const progress = Math.min((data.current_epoch / 100) * 100, 100);
+            document.getElementById('progress-bar').style.width = `${progress}%`;
         }
 
-        // Recent playbooks
-        if (data.recent_playbooks && data.recent_playbooks.length > 0) {
-            const pbHtml = data.recent_playbooks.slice(0, 5).map(pb =>
-                `<div class="metric-item"><a href="/playbook/${pb.playbook_id}">${pb.playbook_id}</a></div>`
-            ).join('');
-            document.getElementById('recent-playbooks').innerHTML = '<h3 style="color: #f0f2f5; margin-bottom: 0.5rem">Recent Playbooks</h3>' + pbHtml;
-        } else {
-            document.getElementById('recent-playbooks').innerHTML = '';
+        // 更新核心指标卡片
+        if (data.validation['val/success_rate']) {
+            const val = data.validation['val/success_rate'].current;
+            document.getElementById('val-success-rate').textContent = val !== null ? (val * 100).toFixed(1) + '%' : '-';
         }
+        if (data.validation['val/customer_service/test_score']) {
+            const val = data.validation['val/customer_service/test_score'].current;
+            document.getElementById('val-test-score').textContent = val !== null ? val.toFixed(3) : '-';
+        }
+        if (data.episode['episode/reward/mean']) {
+            const val = data.episode['episode/reward/mean'].current;
+            document.getElementById('episode-reward').textContent = val !== null ? val.toFixed(3) : '-';
+        }
+        if (data.episode['episode/valid_action_ratio']) {
+            const val = data.episode['episode/valid_action_ratio'].current;
+            document.getElementById('valid-action-ratio').textContent = val !== null ? (val * 100).toFixed(1) + '%' : '-';
+        }
+
+        // 渲染指标图表
+        if (data.episode['episode/reward/mean']) {
+            renderMetricChart(data.episode['episode/reward/mean'].history, 'episode-metrics-chart');
+        }
+        if (data.actor['actor/pg_loss']) {
+            renderMetricChart(data.actor['actor/pg_loss'].history, 'actor-metrics-chart', '#8b5cf6');
+        }
+        if (data.validation['val/customer_service/test_score']) {
+            renderMetricChart(data.validation['val/customer_service/test_score'].history, 'val-metrics-chart', '#10b981');
+        }
+
+        // 渲染指标详情
+        renderMetricDetails(data.validation, 'val-details');
+        renderMetricDetails(data.episode, 'episode-details');
+        renderMetricDetails(data.actor, 'actor-details');
+        renderMetricDetails(data.performance, 'perf-details');
+
+        // 更新刷新时间
+        document.getElementById('last-refresh').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
     } catch (e) {
         console.error('Failed to load training status:', e);
     }

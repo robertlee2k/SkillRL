@@ -5,33 +5,32 @@
 {% block content %}
 <h1>Playbooks</h1>
 
-<form id="filter-form" hx-get="/api/playbooks-table" hx-target="#playbook-tbody" hx-push-url="true">
+<form id="filter-form" hx-get="/api/playbooks-table" hx-target="#playbook-tbody" hx-push-url="true" hx-trigger="submit">
     <div class="filters">
-        <input type="text" name="search" placeholder="Search playbook_id, session_id, scenario..."
-               value="{{ current_filters.search }}"
-               hx-get="/api/playbooks-table" hx-trigger="keyup changed delay:300ms" hx-target="#playbook-tbody" hx-push-url="true">
+        <input type="text" name="search" id="search-input" placeholder="Search playbook_id, session_id, scenario..."
+               value="{{ current_filters.search }}">
 
-        <select name="scenario">
+        <select name="scenario" id="scenario-select">
             <option value="">All Scenarios</option>
             {% for s in filters.scenarios %}
             <option value="{{ s }}" {% if s == current_filters.scenario %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
         </select>
 
-        <select name="subtype">
+        <select name="subtype" id="subtype-select">
             <option value="">All Subtypes</option>
             {% for s in filters.subtypes %}
             <option value="{{ s }}" {% if s == current_filters.subtype %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
         </select>
 
-        <select name="has_order">
+        <select name="has_order" id="has-order-select">
             <option value="">All Orders</option>
             <option value="true" {% if current_filters.has_order == "true" %}selected{% endif %}>Has Order</option>
             <option value="false" {% if current_filters.has_order == "false" %}selected{% endif %}>No Order</option>
         </select>
 
-        <select name="sentiment">
+        <select name="sentiment" id="sentiment-select">
             <option value="">All Sentiments</option>
             {% for s in filters.sentiments %}
             <option value="{{ s }}" {% if s == current_filters.sentiment %}selected{% endif %}>{{ s }}</option>
@@ -41,6 +40,24 @@
         <button type="button" onclick="window.location='/'">Reset</button>
     </div>
 </form>
+
+<script>
+// 搜索框延迟提交
+let searchTimeout;
+document.getElementById('search-input').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(function() {
+        htmx.trigger('#filter-form', 'submit');
+    }, 300);
+});
+
+// Select 变化时提交
+document.querySelectorAll('#filter-form select').forEach(function(select) {
+    select.addEventListener('change', function() {
+        htmx.trigger('#filter-form', 'submit');
+    });
+});
+</script>
 
 <p id="total-count">Total: <strong>{{ total }}</strong> playbooks</p>
 
