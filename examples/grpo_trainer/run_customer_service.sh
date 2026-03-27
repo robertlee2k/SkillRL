@@ -49,10 +49,11 @@ group_size=8         # Parallel rollouts per episode
 
 # ==========================================
 # 4. 启动 verl GRPO 训练
-# 【修改2：增加生成长度max_response_length，防止思考被截断】
+# 【修改2：增加生成长度max_response_length到1024，防止思考被截断】
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
 # 【修改4: 压住KL】
-#  【修改5: 改成bf16】
+# 【修改5: 改成bf16】
+# 【修改6: prompt长度翻倍到8192】
 # ==========================================
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -60,7 +61,7 @@ python3 -m verl.trainer.main_ppo \
     data.val_files=$HOME/data/verl-agent/customer_service/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
-    data.max_prompt_length=4096 \
+    data.max_prompt_length=8192 \
     data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
