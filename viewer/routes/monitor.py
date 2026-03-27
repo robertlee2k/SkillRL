@@ -74,22 +74,70 @@ async def get_training_status(log_dir: str = Query(None)):
         "log_exists": log_path.exists(),
         "current_epoch": None,
         "current_step": None,
-        "recent_metrics": [],
+        # 分类指标
+        "validation": {},  # 验证集指标
+        "episode": {},     # Episode指标
+        "training": {},    # 训练进度
+        "actor": {},       # Actor loss指标
+        "critic": {},      # Critic指标
+        "performance": {}, # 性能指标
         "recent_playbooks": [],
     }
 
-    # 读取最近的训练指标（如果有TensorBoard日志）
+    # 定义重要指标
+    key_metrics = {
+        "validation": [
+            "val/success_rate",
+            "val/unknown_success_rate",
+            "val/customer_service/test_score",
+            "val/customer_service/tool_call_count/mean",
+        ],
+        "episode": [
+            "episode/success_rate",
+            "episode/reward/mean",
+            "episode/reward/max",
+            "episode/length/mean",
+            "episode/valid_action_ratio",
+        ],
+        "training": [
+            "training/epoch",
+            "training/global_step",
+        ],
+        "actor": [
+            "actor/pg_loss",
+            "actor/kl_loss",
+            "actor/entropy_loss",
+            "actor/ppo_kl",
+        ],
+        "critic": [
+            "critic/rewards/mean",
+            "critic/score/mean",
+            "critic/advantages/mean",
+        ],
+        "performance": [
+            "perf/throughput",
+            "perf/mfu/actor",
+            "perf/max_memory_allocated_gb",
+        ],
+    }
+
+    # 读取训练指标
     if log_path.exists():
         try:
             from tensorboard.backend.event_processing import event_file_loader
             event_files = sorted(log_path.glob("events.out.tfevents.*"), reverse=True)
+
             if event_files:
                 loader = event_file_loader.EventFileLoader(str(event_files[0]))
                 events = list(loader.Load())
-                for event in events[-20:]:  # 最近20个事件
+
+                # 收集所有指标
+                all_metrics = {}
+                for event in events:
                     if event.HasField("summary"):
                         for value in event.summary.value:
-                            # 支持simple_value和tensor两种格式
+                            tag = value.tag
+                            # 获取值
                             val = None
                             if value.HasField("simple_value"):
                                 val = value.simple_value
@@ -100,19 +148,37 @@ async def get_training_status(log_dir: str = Query(None)):
                                 elif tensor.double_val:
                                     val = tensor.double_val[0]
 
-                            result["recent_metrics"].append({
-                                "tag": value.tag,
-                                "value": val,
-                                "step": event.step,
-                            })
-                        if event.step:
-                            result["current_step"] = event.step
+                            if val is not None:
+                                if tag not in all_metrics:
+                                    all_metrics[tag] = []
+                                all_metrics[tag].append({
+                                    "step": event.step,
+                                    "value": val,
+                                })
+
+                            if event.step:
+                                result["current_step"] = event.step
+
+                # 按分类整理指标
+                for category, tags in key_metrics.items():
+                    for tag in tags:
+                        if tag in all_metrics:
+                            values = all_metrics[tag]
+                            result[category][tag] = {
+                                "current": values[-1]["value"] if values else None,
+                                "history": values,  # 返回历史用于绘图
+                            }
+
+                # 提取当前epoch
+                if "training/epoch" in all_metrics:
+                    result["current_epoch"] = int(all_metrics["training/epoch"][-1]["value"])
+
         except ImportError:
             result["error"] = "tensorboard not installed"
         except Exception as e:
             result["error"] = str(e)
 
-    # 返回最近采样的playbook（从最新文件读取，如果有）
+    # 返回最近采样的playbook
     sample_file = log_path / "recent_playbooks.json"
     if sample_file.exists():
         try:
