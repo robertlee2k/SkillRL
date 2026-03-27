@@ -39,14 +39,17 @@ else
 fi
 
 # 从日志读取最新进度
-if [ -f "/tmp/parallel_etl.log" ]; then
-    latest=$(grep "Progress:" /tmp/parallel_etl.log | tail -1)
-    if [ -n "$latest" ]; then
-        echo ""
-        echo "最新进度:"
-        echo "  $latest"
+for logfile in "/tmp/parallel_etl_20.log" "/tmp/parallel_etl.log"; do
+    if [ -f "$logfile" ]; then
+        latest=$(grep "Progress:" "$logfile" | tail -1)
+        if [ -n "$latest" ]; then
+            echo ""
+            echo "最新进度:"
+            echo "  $latest"
+            break
+        fi
     fi
-fi
+done
 
 echo ""
 echo "========================"

@@ -11,10 +11,26 @@ logger = logging.getLogger(__name__)
 
 
 def load_sessions(file_path: str) -> List[Dict[str, Any]]:
-    """Load sessions from JSON file."""
+    """Load sessions from JSON file.
+
+    Supports both direct list format and wrapped format with 'data' key.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            raw_data = json.load(f)
+
+        # Handle wrapped format: {"data": [...], "total_sessions": N}
+        if isinstance(raw_data, dict) and 'data' in raw_data:
+            sessions = raw_data['data']
+            logger.info(f"Loaded wrapped format: {len(sessions)} sessions from 'data' field")
+            return sessions
+        # Handle direct list format
+        elif isinstance(raw_data, list):
+            logger.info(f"Loaded direct format: {len(raw_data)} sessions")
+            return raw_data
+        else:
+            raise ValueError(f"Unexpected JSON format: expected list or dict with 'data' key, got {type(raw_data)}")
+
     except FileNotFoundError:
         raise FileNotFoundError(f"Session file not found: {file_path}")
     except json.JSONDecodeError as e:
