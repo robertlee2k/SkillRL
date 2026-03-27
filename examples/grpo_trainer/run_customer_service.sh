@@ -30,22 +30,28 @@ export WANDB_NAME="customer_service_grpo_baseline"
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
-# 【修改1：降回合理的 Batch Size，加速单步迭代】
-train_data_size=32
-val_data_size=64
-group_size=8         # Parallel rollouts per episode
-
-# 预处理客服场景数据
+# 预处理客服场景数据 （这里数据是5784条）
 python3 scripts/prepare_cs_data.py \
     --playbook_path outputs/playbooks_full.json \
     --output_dir $HOME/data/verl-agent/customer_service \
-    --train_data_size $train_data_size \
-    --val_data_size $val_data_size
+    --train_data_size 4000 \
+    --val_data_size 1784
+
+# 【合理的 Batch Size，加速单步迭代】
+#  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │    有订单    │
+#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┼──────────────┤
+#  │ 训练集 │ 4000 │ 3150 (78.8%) │ 568 (14.2%) │ 179 (4.5%) │ 103 (2.6%) │ 1071 (26.8%) │
+#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┼──────────────┤
+#  │ 验证集 │ 1784 │ 1434 (80.4%) │ 229 (12.8%) │ 77 (4.3%)  │ 44 (2.5%)  │ 486 (27.2%)
+train_data_size=64  # 我们的train数据有4000条，估计2500条就能收敛
+val_data_size=256
+group_size=8         # Parallel rollouts per episode
 
 # ==========================================
 # 4. 启动 verl GRPO 训练
 # 【修改2：增加生成长度max_response_length，防止思考被截断】
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
+#  压住KL
 # ==========================================
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -54,7 +60,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \
-    data.max_response_length=768 \
+    data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
@@ -64,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.05 \
+    actor_rollout_ref.actor.kl_loss_coef=0.1 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
@@ -97,7 +103,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='grpo_baseline' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=30 \
+    trainer.save_freq=20 \
     trainer.test_freq=5 \
     +trainer.val_freq=10 \
     trainer.total_epochs=150 \
