@@ -13,10 +13,12 @@ Output format (parquet):
 
 Usage:
     python scripts/prepare_cs_data.py \
-        --playbook_path outputs/playbooks_new.json \
+        --playbook_path outputs/playbooks_full.json \
         --output_dir ~/data/verl-agent/customer_service \
-        --train_data_size 16 \
-        --val_data_size 64
+        --train_data_size 4000 \
+        --val_data_size 1196
+
+Note: train_data_size + val_data_size must not exceed total playbook count.
 """
 
 import os
@@ -143,6 +145,9 @@ def prepare_data(
     """
     Prepare training and validation data from playbooks.
 
+    Splits playbooks into train/val sets without duplication.
+    Raises error if total requested size exceeds available data.
+
     Args:
         playbook_path: Path to playbooks JSON file
         output_dir: Directory to save parquet files
@@ -153,36 +158,38 @@ def prepare_data(
     # Load playbooks
     playbooks = load_playbooks(playbook_path)
 
+    total_requested = train_data_size + val_data_size
+    total_available = len(playbooks)
+
+    # Validate: cannot request more than available
+    if total_requested > total_available:
+        raise ValueError(
+            f"Requested {total_requested} samples ({train_data_size} train + {val_data_size} val) "
+            f"but only {total_available} playbooks available. "
+            f"Max possible: train={total_available - 1}, val=1"
+        )
+
     # Set random seed
     random.seed(seed)
 
     # Shuffle playbooks
     random.shuffle(playbooks)
 
-    # Split into train and validation
-    # For training, we duplicate playbooks if needed to reach train_data_size
-    train_records: List[Dict[str, Any]] = []
-    val_records: List[Dict[str, Any]] = []
+    # Split into train and validation (no overlap, no duplication)
+    train_playbooks = playbooks[:train_data_size]
+    val_playbooks = playbooks[train_data_size:train_data_size + val_data_size]
 
     # Generate training records
-    train_idx = 0
-    while len(train_records) < train_data_size:
-        for playbook in playbooks:
-            if len(train_records) >= train_data_size:
-                break
-            record = playbook_to_record(playbook, train_idx)
-            train_records.append(record)
-            train_idx += 1
+    train_records: List[Dict[str, Any]] = []
+    for idx, playbook in enumerate(train_playbooks):
+        record = playbook_to_record(playbook, idx)
+        train_records.append(record)
 
     # Generate validation records
-    val_idx = 0
-    while len(val_records) < val_data_size:
-        for playbook in playbooks:
-            if len(val_records) >= val_data_size:
-                break
-            record = playbook_to_record(playbook, val_idx)
-            val_records.append(record)
-            val_idx += 1
+    val_records: List[Dict[str, Any]] = []
+    for idx, playbook in enumerate(val_playbooks):
+        record = playbook_to_record(playbook, idx)
+        val_records.append(record)
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
