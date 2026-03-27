@@ -9,10 +9,17 @@ import os
 import json
 import re
 import logging
+import time
 from typing import Dict, Any, Optional, Union
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+# LLM调用配置
+LLM_TIMEOUT = 180  # 秒（增加到3分钟）
+LLM_MAX_RETRIES = 2  # 重试次数
+MAX_CONVERSATION_CHARS = 2500  # 对话文本最大长度（更激进截断）
+MAX_TURNS_FOR_TRUNCATION = 20  # 超过此turns数时启用智能截断
 
 # 31 valid skills (from design spec Appendix B)
 VALID_SKILLS = [
@@ -164,9 +171,32 @@ def extract_json_from_text(text: Optional[str]) -> Optional[Dict[str, Any]]:
         if match:
             try:
                 json_str = match.group(1) if '```' in pattern else match.group(0)
-                return json.loads(json_str)
+                # Try to parse
+                result = json.loads(json_str)
+                return result
             except (json.JSONDecodeError, IndexError):
-                continue
+                # Try to fix common JSON issues
+                try:
+                    json_str = match.group(1) if '```' in pattern else match.group(0)
+                    # Remove trailing commas
+                    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+                    # Fix unescaped quotes in strings (simple heuristic)
+                    # Try parsing again
+                    result = json.loads(json_str)
+                    return result
+                except:
+                    continue
+
+    # Last resort: try to find nodes object directly
+    nodes_match = re.search(r'"nodes"\s*:\s*\{[\s\S]*\}', text)
+    if nodes_match:
+        try:
+            # Wrap in a proper JSON object
+            json_str = '{' + nodes_match.group(0) + '}'
+            json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+            return json.loads(json_str)
+        except:
+            pass
 
     return None
 
@@ -184,10 +214,11 @@ class LLMGenerator:
         self.client = OpenAI(
             base_url="https://ark.cn-beijing.volces.com/api/v3",
             api_key=api_key,
+            timeout=LLM_TIMEOUT,
         )
         # 豆包模型接入点
         self.model = "doubao-seed-2-0-pro-260215"
-        logger.info(f"[LLMGenerator] Initialized with model: {self.model}")
+        logger.info(f"[LLMGenerator] Initialized with model: {self.model}, timeout: {LLM_TIMEOUT}s")
 
     def call_llm_for_classification(self, conversation_text: str) -> str:
         """
@@ -244,6 +275,104 @@ class LLMGenerator:
             logger.error(f"[LLMGenerator] Error calling LLM for classification: {e}")
             return 'trash'
 
+    def _truncate_conversation(self, conversation_text: str, max_chars: int = MAX_CONVERSATION_CHARS) -> str:
+        """
+        Truncate conversation text to prevent LLM timeout.
+
+        For long conversations:
+        - Keep first 10 turns (context establishment)
+        - Keep last 10 turns (conclusion/outcome)
+        - Middle section is summarized as omitted
+
+        Args:
+            conversation_text: Full conversation text
+            max_chars: Maximum characters allowed
+
+        Returns:
+            Truncated conversation text
+        """
+        if len(conversation_text) <= max_chars:
+            return conversation_text
+
+        # Split by lines (turns)
+        lines = conversation_text.split('\n')
+
+        # If not too many turns, use simple truncation
+        if len(lines) <= MAX_TURNS_FOR_TRUNCATION:
+            # Simple head-tail truncation
+            half_chars = max_chars // 2
+            first_lines = []
+            last_lines = []
+            current_chars = 0
+
+            for line in lines:
+                if current_chars + len(line) + 1 > half_chars:
+                    break
+                first_lines.append(line)
+                current_chars += len(line) + 1
+
+            current_chars = 0
+            for line in reversed(lines):
+                if current_chars + len(line) + 1 > half_chars:
+                    break
+                last_lines.insert(0, line)
+                current_chars += len(line) + 1
+
+            truncated = '\n'.join(first_lines) + '\n...[中间部分已省略]...\n' + '\n'.join(last_lines)
+            logger.info(f"[LLMGenerator] Simple truncated: {len(lines)} turns -> {len(first_lines)+len(last_lines)} turns")
+            return truncated
+
+        # Smart turn-based truncation for long conversations
+        # Keep first 10 and last 10 turns
+        first_turns = []
+        last_turns = []
+        turn_count = 0
+        current_turn_lines = []
+
+        for line in lines:
+            if line.startswith('买家:') or line.startswith('客服:'):
+                if current_turn_lines:
+                    if turn_count < 10:
+                        first_turns.extend(current_turn_lines)
+                    turn_count += 1
+                    current_turn_lines = []
+            current_turn_lines.append(line)
+
+        # Handle last turn
+        if current_turn_lines:
+            if turn_count < 10:
+                first_turns.extend(current_turn_lines)
+            turn_count += 1
+
+        # Collect last 10 turns
+        turn_count = 0
+        current_turn_lines = []
+        for line in reversed(lines):
+            if line.startswith('买家:') or line.startswith('客服:'):
+                if current_turn_lines:
+                    if turn_count < 10:
+                        last_turns[:0] = current_turn_lines
+                    turn_count += 1
+                    current_turn_lines = []
+            current_turn_lines.insert(0, line)
+
+        if current_turn_lines and turn_count < 10:
+            last_turns[:0] = current_turn_lines
+
+        # Build truncated text
+        truncated_lines = first_turns[:50]  # Limit chars
+        truncated_lines.append('...[中间对话已省略，保留关键上下文]...')
+        truncated_lines.extend(last_turns[-50:] if len(last_turns) > 50 else last_turns)
+
+        truncated = '\n'.join(truncated_lines)
+
+        # Final char limit check
+        if len(truncated) > max_chars:
+            truncated = truncated[:max_chars//2] + '\n...[省略]...\n' + truncated[-max_chars//2:]
+
+        logger.info(f"[LLMGenerator] Smart truncated: {len(lines)} lines -> {len(truncated_lines)} lines ({len(truncated)} chars)")
+        return truncated
+
     def call_llm_for_playbook(self, conversation_text: str, session_id: str = "unknown") -> Optional[Dict[str, Any]]:
         """
         Generate a complete playbook JSON from conversation text.
@@ -255,6 +384,9 @@ class LLMGenerator:
         Returns:
             Playbook dict following Section 5.1 schema, or None on failure
         """
+        # Truncate long conversations to prevent timeout
+        truncated_text = self._truncate_conversation(conversation_text)
+
         prompt = f"""你是一个专业的 RL 环境剧本构建工程师。
 我将给你一段真实的电商客服二人对话记录（User 和 Agent 交替）。
 你需要将其转化为强化学习环境所需的静态剧本树（JSON格式）。
@@ -266,7 +398,7 @@ class LLMGenerator:
 售后：aft_check_policy, aft_collect_evidence, aft_initiate_refund, aft_initiate_return, aft_initiate_exchange, aft_schedule_pickup, aft_track_progress, aft_compensate, aft_reject_explain
 
 【对话内容】：
-{conversation_text}
+{truncated_text}
 
 🔴 【核心要求：脑补发散（Hallucinate Branches）】：
 你生成的剧本必须是"树"而不是"线"！每个节点至少要有2-4个分支！
@@ -335,34 +467,54 @@ class LLMGenerator:
   }}
 }}"""
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=4096,
-            )
+        # Retry mechanism for LLM calls
+        last_error = None
+        for attempt in range(LLM_MAX_RETRIES + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=4096,
+                )
 
-            content = response.choices[0].message.content
-            result = extract_json_from_text(content)
+                content = response.choices[0].message.content
 
-            if result is None:
-                logger.error(f"[LLMGenerator] Could not parse JSON from playbook response")
-                return None
+                # Debug: log response length for long conversations
+                if content and len(content) > 1000:
+                    logger.debug(f"[LLMGenerator] LLM returned {len(content)} chars for session {session_id}")
 
-            # Validate basic structure
-            if 'nodes' not in result:
-                logger.error("[LLMGenerator] LLM response missing 'nodes' key")
-                return None
+                result = extract_json_from_text(content)
 
-            # Post-process to fix common LLM issues
-            result = post_process_playbook(result)
+                if result is None:
+                    last_error = "Could not parse JSON from playbook response"
+                    # Log the problematic response for debugging
+                    if content:
+                        logger.error(f"[LLMGenerator] {last_error} (attempt {attempt + 1}), response preview: {content[:500]}...")
+                    else:
+                        logger.error(f"[LLMGenerator] {last_error} (attempt {attempt + 1}), LLM returned empty content")
+                    continue
 
-            logger.info(f"[LLMGenerator] Generated playbook with {len(result['nodes'])} nodes")
-            return result
+                # Validate basic structure
+                if 'nodes' not in result:
+                    last_error = "LLM response missing 'nodes' key"
+                    logger.error(f"[LLMGenerator] {last_error} (attempt {attempt + 1})")
+                    continue
 
-        except Exception as e:
-            logger.error(f"[LLMGenerator] Error calling LLM for playbook: {e}")
-            return None
+                # Post-process to fix common LLM issues
+                result = post_process_playbook(result)
+
+                logger.info(f"[LLMGenerator] Generated playbook with {len(result['nodes'])} nodes for session {session_id}")
+                return result
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"[LLMGenerator] Error calling LLM for playbook (attempt {attempt + 1}): {e}")
+                if attempt < LLM_MAX_RETRIES:
+                    time.sleep(2)  # Wait before retry
+                    logger.info(f"[LLMGenerator] Retrying...")
+
+        logger.error(f"[LLMGenerator] All retries failed for session {session_id}: {last_error}")
+        return None
 
 
 # Singleton instance
