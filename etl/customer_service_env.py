@@ -1,8 +1,8 @@
 """
-Customer Service RL Environment Engine.
+Customer Service RL Environment Engine (Optimized for GRPO).
 
 Implements a reinforcement learning environment based on playbook JSON scripts.
-Supports step rewards and episode-level business outcome rewards.
+Features advanced reward shaping: Tiered Patience, Sentiment Delta, and Variance Smoothing.
 """
 
 import json
@@ -38,77 +38,60 @@ HIGH_RISK_SKILLS = {
     'aft_initiate_exchange', 'aft_compensate'
 }
 
+# 情绪量化分值（用于计算 Sentiment Delta）
+SENTIMENT_SCORES = {
+    'happy': 1.0,
+    'neutral': 0.0,
+    'frustrated': -1.0,
+    'angry': -2.0
+}
+
 
 @dataclass
 class EnvState:
     """Environment state tracking."""
     current_node: str = 'root'
     action_history: List[str] = field(default_factory=list)
-    dialogue_history: List[Dict[str, str]] = field(default_factory=list)  # Full dialogue: [{"role": "buyer/agent", "content": "..."}]
+    dialogue_history: List[Dict[str, str]] = field(default_factory=list)
     visited_nodes: List[str] = field(default_factory=list)
     slots: Dict[str, Any] = field(default_factory=dict)
     done: bool = False
-    won: bool = False  # Successfully reached terminal
-    fell_back: bool = False  # Whether last action triggered fallback
+    won: bool = False
+    fell_back: bool = False
     scenario: str = 'unknown'
+    patience: int = 2  # 客户耐心值，初始允许犯错 2 次
 
 
 class CustomerServiceEnv:
     """
     RL Environment for Customer Service Agent Training.
-
     Loads playbooks and provides step/episode rewards based on business outcomes.
     """
 
     def __init__(self, playbook_path: str):
-        """
-        Initialize environment with playbooks.
-
-        Args:
-            playbook_path: Path to JSON file containing playbooks list
-        """
         self.playbooks: List[Dict[str, Any]] = []
         self.current_playbook: Optional[Dict[str, Any]] = None
         self.state: Optional[EnvState] = None
 
-        # Load playbooks
         self._load_playbooks(playbook_path)
         logger.info(f"[CustomerServiceEnv] Loaded {len(self.playbooks)} playbooks")
 
     def _load_playbooks(self, path: str) -> None:
-        """Load playbooks from JSON file."""
         with open(path, 'r', encoding='utf-8') as f:
             self.playbooks = json.load(f)
-
         if not self.playbooks:
             raise ValueError(f"No playbooks found in {path}")
 
     def reset(self, playbook_id: Optional[str] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Reset environment to initial state.
-
-        Args:
-            playbook_id: Optional specific playbook to use, else random
-
-        Returns:
-            Tuple of (observation, info) where observation contains:
-                - current_node: node dict
-                - slots: current slot values
-                - scenario: scenario type
-                - action_history: empty list
-        """
-        # Select playbook
         if playbook_id:
             self.current_playbook = next(
-                (p for p in self.playbooks if p['playbook_id'] == playbook_id),
-                None
+                (p for p in self.playbooks if p['playbook_id'] == playbook_id), None
             )
             if not self.current_playbook:
                 raise ValueError(f"Playbook not found: {playbook_id}")
         else:
             self.current_playbook = random.choice(self.playbooks)
 
-        # Initialize state
         self.state = EnvState(
             current_node='root',
             action_history=[],
@@ -118,7 +101,8 @@ class CustomerServiceEnv:
             done=False,
             won=False,
             fell_back=False,
-            scenario=self.current_playbook.get('scenario', 'unknown')
+            scenario=self.current_playbook.get('scenario', 'unknown'),
+            patience=2
         )
 
         observation = self._get_observation()
@@ -128,11 +112,9 @@ class CustomerServiceEnv:
             'scenario': self.state.scenario,
             'business_outcome': self.current_playbook.get('business_outcome', {})
         }
-
         return observation, info
 
     def _get_observation(self) -> Dict[str, Any]:
-        """Get current observation."""
         if not self.current_playbook or not self.state:
             return {}
 
@@ -147,114 +129,121 @@ class CustomerServiceEnv:
             'available_skills': current_node_data.get('available_skills', []),
             'slots': self.state.slots,
             'action_history': self.state.action_history.copy(),
-            'dialogue_history': self.state.dialogue_history.copy(),  # Full dialogue for LLM
+            'dialogue_history': self.state.dialogue_history.copy(),
             'done': self.state.done,
-            'scenario': self.state.scenario
+            'scenario': self.state.scenario,
+            'patience': self.state.patience
         }
 
     def step(self, action: str) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
-        """
-        Take a step in the environment.
-
-        Args:
-            action: Skill ID to execute
-
-        Returns:
-            Tuple of (observation, reward, done, info)
-        """
-        # Check if environment is initialized
         if not self.state:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
-        # Handle padded steps after episode is done (batch alignment in RL frameworks)
-        # Return dummy data instead of raising exception
         if self.state.done:
-            return self._get_observation(), 0.0, True, {'info': 'Episode already done (padded step)'}
+            return self._get_observation(), 0.0, True, {'info': 'Episode already done'}
 
-        if action not in VALID_SKILLS:
-            logger.warning(f"[CustomerServiceEnv] Invalid action: {action}")
-            return self._get_observation(), -1.0, True, {'error': 'Invalid action'}
-
-        # Get current node data
         nodes = self.current_playbook['nodes']
         current_node_data = nodes.get(self.state.current_node, {})
+        current_sentiment = current_node_data.get('sentiment', 'neutral')
 
-        # Record current buyer message into dialogue history
+        # 记录买家当前消息
         current_buyer_text = current_node_data.get('buyer_text', '')
         if current_buyer_text and current_buyer_text != '[END]':
-            self.state.dialogue_history.append({
-                'role': 'buyer',
-                'content': current_buyer_text
-            })
+            self.state.dialogue_history.append({'role': 'buyer', 'content': current_buyer_text})
 
-        # Track action
+        # 记录模型动作
         self.state.action_history.append(action)
-
-        # Record agent action into dialogue history
         self.state.dialogue_history.append({
             'role': 'agent',
             'action': action,
-            'content': f"[Action: {action}]"  # In real scenario, LLM would generate response
+            'content': f"[Action: {action}]"
         })
 
-        # Calculate step reward
-        step_reward = 0.0
+        # ================= 模块一：步级奖励重塑 =================
+        step_reward = -0.05  # 全局时间惩罚，鼓励高效
         self.state.fell_back = False
-
-        # Check if action is in transitions
         transitions = current_node_data.get('transitions', {})
+        next_node = self.state.current_node  # 默认留在原地（兜底状态）
 
-        if action in transitions:
-            # Valid transition
+        # ================= 模块二：分层容错与耐心系统 =================
+        if action not in VALID_SKILLS:
+            # Tier 1: 格式崩溃 (Syntax Error)
+            self.state.fell_back = True
+            self.state.patience -= 1
+            step_reward -= 1.0
+            self.state.dialogue_history.append({
+                'role': 'system',
+                'content': '[System: 动作格式无效，只能从 available_skills 中选择]'
+            })
+            logger.debug(f"Tier 1 格式错误: {action}, 剩余耐心: {self.state.patience}")
+
+        elif action not in transitions:
+            # Tier 2: 业务偏航 (Context Error)
+            self.state.fell_back = True
+            self.state.patience -= 1
+            step_reward -= 0.5
+            self.state.dialogue_history.append({
+                'role': 'buyer',
+                'content': '你回答的好像不对吧？请仔细看看我的问题。'
+            })
+            logger.debug(f"Tier 2 业务偏航: {action}, 剩余耐心: {self.state.patience}")
+
+        else:
+            # 合法动作
             next_node = transitions[action]
-            step_reward += 0.5  # Successfully progressed
+            if next_node not in self.state.visited_nodes:
+                step_reward += 0.5  # 防刷分：仅首次访问给分
 
-            # Check if reached terminal
+            # 答对了，如果耐心受损，可恢复 1 点
+            self.state.patience = min(2, self.state.patience + 1)
+
             if next_node == 'terminal':
                 self.state.done = True
                 self.state.won = True
-        else:
-            # Fall back to default_fallback
-            fallback = current_node_data.get('default_fallback', 'terminal')
-            next_node = fallback
-            self.state.fell_back = True
-            step_reward -= 0.5  # Fallback penalty
 
-        # Update state
-        self.state.current_node = next_node
-        self.state.visited_nodes.append(next_node)
-
-        # Check sentiment for negative path penalty
-        next_node_data = nodes.get(next_node, {})
-        if next_node_data.get('sentiment') == 'angry':
-            step_reward -= 0.5
-
-        # Update slots
-        slot_updates = next_node_data.get('slot_updates', {})
-        self.state.slots.update(slot_updates)
-
-        # Check if terminal
-        if next_node == 'terminal':
+        # Tier 3: 耐心耗尽 (Rage Quit)
+        if self.state.patience <= 0 and not self.state.done:
             self.state.done = True
+            self.state.won = False
+            next_node = 'terminal'
+            step_reward -= 2.0  # 严厉的愤怒挂断惩罚
+            logger.info("[CustomerServiceEnv] Tier 3: 客户耐心耗尽，愤怒挂断！")
+
+        # 更新节点状态
+        self.state.current_node = next_node
+        if next_node not in self.state.visited_nodes:
+            self.state.visited_nodes.append(next_node)
+
+        # ================= 模块三：情绪 Delta 引擎 =================
+        if not self.state.fell_back and not self.state.done and next_node != 'terminal':
+            next_sentiment = nodes.get(next_node, {}).get('sentiment', 'neutral')
+            curr_score = SENTIMENT_SCORES.get(current_sentiment, 0.0)
+            next_score = SENTIMENT_SCORES.get(next_sentiment, 0.0)
+            delta = next_score - curr_score
+
+            if delta > 0:
+                step_reward += 0.8 * delta  # 成功安抚，强力正反馈
+            elif delta < 0:
+                step_reward += 1.0 * delta  # 激怒客户，严厉惩罚 (delta 是负数)
+
+        # 更新槽位
+        if not self.state.done and not self.state.fell_back:
+            slot_updates = nodes.get(next_node, {}).get('slot_updates', {})
+            self.state.slots.update(slot_updates)
 
         observation = self._get_observation()
         info = {
             'fell_back': self.state.fell_back,
-            'sentiment': next_node_data.get('sentiment', 'neutral'),
-            'visited_nodes': len(self.state.visited_nodes)
+            'sentiment': nodes.get(next_node, {}).get('sentiment', 'neutral'),
+            'visited_nodes': len(self.state.visited_nodes),
+            'patience': self.state.patience
         }
 
         return observation, step_reward, self.state.done, info
 
     def compute_episode_reward(self) -> float:
         """
-        Compute final episode reward based on business outcome.
-
-        This is called when episode terminates to calculate
-        the overall success/failure reward.
-
-        Returns:
-            Final episode reward
+        Compute final episode reward based on business outcome with Variance Smoothing.
         """
         if not self.state or not self.current_playbook:
             return 0.0
@@ -268,73 +257,75 @@ class CustomerServiceEnv:
 
         reward = 0.0
 
-        # [Risk Control] Check for high-risk actions without order
+        # ================= 模块四：终局平滑 =================
+        # [Risk Control] 软化高危惩罚，防止模型产生“创伤后遗症”
         used_high_risk = any(skill in action_history for skill in HIGH_RISK_SKILLS)
-
         if not has_order and used_high_risk:
-            logger.warning("[CustomerServiceEnv] FATAL: High-risk action without order!")
-            return -10.0  # Critical financial loss penalty
+            logger.warning("[CustomerServiceEnv] Risk: High-risk action without order.")
+            return -5.0  # 从 -10.0 平滑至 -5.0
 
         if scenario == "presale":
             if won:
-                # Successful presale conversion
-                reward = 2.0 + (0.01 * order_amount) if has_order else 1.0
+                # 使用 log10 平滑极端金额，防止 Advantage 方差爆炸
+                bonus = math.log10(max(10, order_amount)) * 0.5 if has_order else 0.0
+                reward = 2.0 + bonus
             else:
-                # Presale churn penalty
                 reward = -1.0
 
         elif scenario in ["logistics", "aftersale"]:
             if won:
-                # Successfully resolved issue
                 reward = 2.0
-                # Bonus for high-value order recovery
                 if has_order and order_amount > 200:
                     reward += 1.0
             else:
-                # Failed to resolve complaint
                 base_penalty = -2.0
-                # Penalty scales with order value (opportunity cost)
-                if has_order:
-                    amount_penalty = -0.5 * math.log10(max(10, order_amount))
-                else:
-                    amount_penalty = 0
+                amount_penalty = -0.5 * math.log10(max(10, order_amount)) if has_order else 0.0
                 reward = base_penalty + amount_penalty
 
         else:
-            # Unknown scenario - neutral
             reward = 0.0 if won else -0.5
+
+        # --- 终局情绪乘数 (Terminal Sentiment Multiplier) ---
+        # 【修复漏洞2】：如果当前是 terminal，则回退 1 步取上一个真实的节点情绪
+        if self.state.current_node == 'terminal' and len(self.state.visited_nodes) > 1:
+            final_node_id = self.state.visited_nodes[-2]
+        else:
+            final_node_id = self.state.current_node
+
+        final_node_data = self.current_playbook['nodes'].get(final_node_id, {})
+        final_sentiment = final_node_data.get('sentiment', 'neutral')
+
+        # 【修复漏洞1】：正负分数分离乘法，修复逻辑反转陷阱
+        if final_sentiment == 'happy':
+            reward = reward * 1.2 if reward > 0 else reward * 0.8  # 奖励放大，惩罚减小
+        elif final_sentiment == 'angry':
+            reward = reward * 0.8 if reward > 0 else reward * 1.2  # 奖励打折，惩罚加重
 
         logger.info(
             f"[CustomerServiceEnv] Episode reward: {reward:.2f} "
-            f"(scenario={scenario}, won={won}, has_order={has_order}, amount={order_amount})"
+            f"(scenario={scenario}, won={won}, final_sentiment={final_sentiment})"
         )
 
         return reward
 
     def get_available_actions(self) -> List[str]:
-        """Get list of available actions at current node."""
         if not self.state or not self.current_playbook:
             return []
-
         nodes = self.current_playbook['nodes']
         current_node_data = nodes.get(self.state.current_node, {})
-
-        # Return available_skills from node, or all valid skills as fallback
         return current_node_data.get('available_skills', list(VALID_SKILLS))
 
     def render(self) -> str:
-        """Render current state as string."""
         if not self.state:
             return "Environment not initialized"
-
         nodes = self.current_playbook['nodes']
         node = nodes.get(self.state.current_node, {})
-
         lines = [
             f"=== CustomerServiceEnv ===",
             f"Playbook: {self.current_playbook['playbook_id']}",
             f"Scenario: {self.state.scenario}",
             f"Current Node: {self.state.current_node}",
+            f"Patience: {self.state.patience}/2",
             f"Buyer: {node.get('buyer_text', '')[:50]}...",
             f"Sentiment: {node.get('sentiment', 'neutral')}",
             f"Actions: {self.state.action_history}",
@@ -342,43 +333,32 @@ class CustomerServiceEnv:
             "",
             "=== Dialogue History ===",
         ]
-
         for turn in self.state.dialogue_history:
             if turn['role'] == 'buyer':
                 lines.append(f"[买家] {turn['content'][:80]}...")
+            elif turn['role'] == 'system':
+                lines.append(f"{turn['content']}")
             else:
                 lines.append(f"[客服] {turn.get('content', turn.get('action', 'N/A'))}")
-
         return "\n".join(lines)
 
 
-# Convenience functions for testing
 def create_env(playbook_path: str = "outputs/playbooks.json") -> CustomerServiceEnv:
-    """Create and return a CustomerServiceEnv instance."""
     return CustomerServiceEnv(playbook_path)
 
 
 def run_random_episode(env: CustomerServiceEnv) -> Dict[str, Any]:
-    """
-    Run a random episode for testing.
-
-    Returns:
-        Dict with episode statistics
-    """
     obs, info = env.reset()
     total_reward = 0.0
     steps = 0
 
     while not env.state.done and steps < 20:
-        # Random action from available
         available = env.get_available_actions()
         action = random.choice(available) if available else 'gen_clarify'
-
         obs, reward, done, step_info = env.step(action)
         total_reward += reward
         steps += 1
 
-    # Add episode reward
     episode_reward = env.compute_episode_reward()
     total_reward += episode_reward
 

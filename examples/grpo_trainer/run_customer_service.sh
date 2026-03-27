@@ -30,8 +30,9 @@ export WANDB_NAME="customer_service_grpo_baseline"
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
-train_data_size=128   # Number of training episodes per batch
-val_data_size=256     # Number of validation episodes
+# 【修改1：降回合理的 Batch Size，加速单步迭代】
+train_data_size=32
+val_data_size=64
 group_size=8         # Parallel rollouts per episode
 
 # 预处理客服场景数据
@@ -43,6 +44,8 @@ python3 scripts/prepare_cs_data.py \
 
 # ==========================================
 # 4. 启动 verl GRPO 训练
+# 【修改2：增加生成长度max_response_length，防止思考被截断】
+# 【修改3：关闭前置兜底，激活环境内的耐心系统】
 # ==========================================
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -51,7 +54,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \
-    data.max_response_length=512 \
+    data.max_response_length=768 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
@@ -87,14 +90,14 @@ python3 -m verl.trainer.main_ppo \
     env.max_steps=20 \
     env.rollout.n=$group_size \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
-    +env.use_fallback_projection=True \
+    +env.use_fallback_projection=False \
     trainer.critic_warmup=0 \
     trainer.logger=['console','tensorboard'] \
     trainer.project_name='verl_agent_customer_service' \
     trainer.experiment_name='grpo_baseline' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=50 \
+    trainer.save_freq=30 \
     trainer.test_freq=5 \
     +trainer.val_freq=10 \
     trainer.total_epochs=150 \
