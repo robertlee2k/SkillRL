@@ -44,7 +44,7 @@ python3 scripts/prepare_cs_data.py \
 #  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┼──────────────┤
 #  │ 验证集 │ 1784 │ 1434 (80.4%) │ 229 (12.8%) │ 77 (4.3%)  │ 44 (2.5%)  │ 486 (27.2%)
 train_data_size=64  # 我们的train数据有4000条，估计2500条就能收敛
-val_data_size=256
+val_data_size=128
 group_size=8         # Parallel rollouts per episode
 
 # ==========================================
@@ -61,7 +61,7 @@ python3 -m verl.trainer.main_ppo \
     data.val_files=$HOME/data/verl-agent/customer_service/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
-    data.max_prompt_length=8192 \
+    data.max_prompt_length=16384 \
     data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
@@ -88,7 +88,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=False \
-    actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
     actor_rollout_ref.rollout.max_num_seqs=256 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
