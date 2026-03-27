@@ -5,9 +5,12 @@ Implements clean_session per design spec Section 4.
 Validates and cleans sessions according to Red Line requirements.
 """
 
+import logging
 from typing import Dict, Any, Optional
 
 from etl.aggregator import aggregate_turns
+
+logger = logging.getLogger(__name__)
 
 
 def validate_user_agent_alternation(turns: list) -> bool:
@@ -42,6 +45,9 @@ def clean_session(
     """
     Clean a single session according to design spec Section 4.
 
+    Handles sessions that start with Agent messages by removing leading
+    Agent turns to preserve valuable user-agent interactions.
+
     Args:
         session: Session dict with 'messages' field
         min_turns: Minimum number of turns required (default 2)
@@ -55,6 +61,29 @@ def clean_session(
     aggregated = aggregate_turns(messages)
     turns = aggregated['turns']
     initial_slots = aggregated['initial_slots']
+
+    # Handle sessions that start with Agent messages
+    # These are typically:
+    # 1. Agent sends product image/video first, then user asks questions
+    # 2. Agent proactively reaches out (marketing or service)
+    # We remove leading Agent turns to preserve the user-agent interaction
+    if turns and turns[0]['role'] == 'Agent':
+        # Find the first User turn
+        first_user_idx = None
+        for i, turn in enumerate(turns):
+            if turn['role'] == 'User':
+                first_user_idx = i
+                break
+
+        if first_user_idx is not None:
+            # Remove leading Agent turns
+            removed_count = first_user_idx
+            turns = turns[first_user_idx:]
+            logger.debug(f"Removed {removed_count} leading Agent turns from session {session.get('session_id')}")
+        else:
+            # All Agent messages, filter out
+            logger.debug(f"Session {session.get('session_id')} has only Agent messages, filtered")
+            return None
 
     # Validate minimum length
     if len(turns) < min_turns:
