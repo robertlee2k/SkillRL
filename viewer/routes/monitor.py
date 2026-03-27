@@ -85,13 +85,24 @@ async def get_training_status(log_dir: str = Query(None)):
             event_files = sorted(log_path.glob("events.out.tfevents.*"), reverse=True)
             if event_files:
                 loader = event_file_loader.EventFileLoader(str(event_files[0]))
-                events = list(loader)
-                for event in events[-10:]:  # 最近10个事件
+                events = list(loader.Load())
+                for event in events[-20:]:  # 最近20个事件
                     if event.HasField("summary"):
                         for value in event.summary.value:
+                            # 支持simple_value和tensor两种格式
+                            val = None
+                            if value.HasField("simple_value"):
+                                val = value.simple_value
+                            elif value.HasField("tensor"):
+                                tensor = value.tensor
+                                if tensor.float_val:
+                                    val = tensor.float_val[0]
+                                elif tensor.double_val:
+                                    val = tensor.double_val[0]
+
                             result["recent_metrics"].append({
                                 "tag": value.tag,
-                                "value": value.simple_value if value.HasField("simple_value") else None,
+                                "value": val,
                                 "step": event.step,
                             })
                         if event.step:
