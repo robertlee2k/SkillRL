@@ -34,8 +34,8 @@ num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment w
 python3 scripts/prepare_cs_data.py \
     --playbook_path outputs/playbooks_full.json \
     --output_dir $HOME/data/verl-agent/customer_service \
-    --train_data_size 4000 \
-    --val_data_size 1784
+    --train_data_size 3800 \
+    --val_data_size 1200
 
 # 【合理的 Batch Size，加速单步迭代】
 #  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │    有订单    │
