@@ -81,6 +81,7 @@ async def get_training_status(log_dir: str = Query(None)):
         "actor": {},       # Actor loss指标
         "critic": {},      # Critic指标
         "performance": {}, # 性能指标
+        "success_by_length": {},  # 分段成功率
         "recent_playbooks": [],
     }
 
@@ -91,6 +92,9 @@ async def get_training_status(log_dir: str = Query(None)):
             "val/unknown_success_rate",
             "val/customer_service/test_score",
             "val/customer_service/tool_call_count/mean",
+            # 按场景分的验证成功率
+            "val/presale_success_rate",
+            "val/aftersale_success_rate",
         ],
         "episode": [
             "episode/success_rate",
@@ -98,6 +102,9 @@ async def get_training_status(log_dir: str = Query(None)):
             "episode/reward/max",
             "episode/length/mean",
             "episode/valid_action_ratio",
+            # 按场景分的训练成功率
+            "episode/presale_success_rate",
+            "episode/aftersale_success_rate",
         ],
         "training": [
             "training/epoch",
@@ -118,6 +125,13 @@ async def get_training_status(log_dir: str = Query(None)):
             "perf/throughput",
             "perf/mfu/actor",
             "perf/max_memory_allocated_gb",
+        ],
+        # 分段成功率
+        "success_by_length": [
+            "success_rate/len_1_5",
+            "success_rate/len_6_10",
+            "success_rate/len_11_15",
+            "success_rate/len_16_20",
         ],
     }
 

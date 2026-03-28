@@ -59,6 +59,13 @@
         <div class="metric-details" id="val-details"></div>
     </div>
 
+    <!-- 分段成功率 -->
+    <div class="metric-section">
+        <h3>Success Rate by Turn Length</h3>
+        <div class="success-by-length" id="success-by-length-chart"></div>
+        <div class="metric-details" id="success-by-length-details"></div>
+    </div>
+
     <!-- Episode指标 -->
     <div class="metric-section">
         <h3>Episode Metrics</h3>
@@ -317,6 +324,69 @@
 .stats-section h2 {
     margin-bottom: 1.25rem;
 }
+
+/* Success by length chart */
+.success-by-length {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+@media (max-width: 600px) {
+    .success-by-length {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.length-bar-card {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    text-align: center;
+}
+
+.length-bar-card .bar-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.length-bar-card .bar-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.length-bar-card .bar-value.good { color: #10b981; }
+.length-bar-card .bar-value.medium { color: #f59e0b; }
+.length-bar-card .bar-value.poor { color: #f43f5e; }
+
+.length-bar-card .bar-range {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+.length-bar-card .progress-mini {
+    height: 4px;
+    background: var(--bg-primary);
+    border-radius: 2px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+}
+
+.length-bar-card .progress-mini-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.length-bar-card .progress-mini-fill.good { background: #10b981; }
+.length-bar-card .progress-mini-fill.medium { background: #f59e0b; }
+.length-bar-card .progress-mini-fill.poor { background: #f43f5e; }
 </style>
 
 <script>
@@ -406,6 +476,60 @@ function renderMetricDetails(metrics, containerId) {
     container.innerHTML = html;
 }
 
+function renderSuccessByLength(metrics) {
+    const container = document.getElementById('success-by-length-chart');
+    const detailsContainer = document.getElementById('success-by-length-details');
+
+    if (!metrics || Object.keys(metrics).length === 0) {
+        container.innerHTML = '<p style="color: #6b7280; text-align: center; padding: 2rem;">No data yet (will appear after training)</p>';
+        detailsContainer.innerHTML = '';
+        return;
+    }
+
+    // 定义分段
+    const segments = [
+        { tag: 'success_rate/len_1_5', label: 'Short', range: '1-5 turns', description: 'Basic intent recognition' },
+        { tag: 'success_rate/len_6_10', label: 'Medium', range: '6-10 turns', description: 'Mid-range state tracking' },
+        { tag: 'success_rate/len_11_15', label: 'Long', range: '11-15 turns', description: 'Complex negotiation' },
+        { tag: 'success_rate/len_16_20', label: 'Extreme', range: '16-20 turns', description: 'Limit context memory' },
+    ];
+
+    let html = '';
+    let detailsHtml = '';
+
+    segments.forEach(seg => {
+        const data = metrics[seg.tag];
+        const value = data?.current ?? null;
+        const displayValue = value !== null ? (value * 100).toFixed(1) + '%' : '-';
+
+        // 根据成功率决定颜色
+        let colorClass = 'poor';
+        if (value !== null) {
+            if (value >= 0.6) colorClass = 'good';
+            else if (value >= 0.3) colorClass = 'medium';
+        }
+
+        // 进度条宽度
+        const barWidth = value !== null ? Math.min(value * 100, 100) : 0;
+
+        html += `
+            <div class="length-bar-card">
+                <div class="bar-label">${seg.label}</div>
+                <div class="bar-value ${colorClass}">${displayValue}</div>
+                <div class="bar-range">${seg.range}</div>
+                <div class="progress-mini">
+                    <div class="progress-mini-fill ${colorClass}" style="width: ${barWidth}%"></div>
+                </div>
+            </div>
+        `;
+
+        detailsHtml += `<div class="metric-row"><span class="metric-name">${seg.label} (${seg.range})</span><span class="metric-value">${displayValue}</span></div>`;
+    });
+
+    container.innerHTML = html;
+    detailsContainer.innerHTML = detailsHtml;
+}
+
 async function loadTrainingStatus() {
     try {
         const logDir = document.getElementById('log-dir').value;
@@ -460,6 +584,9 @@ async function loadTrainingStatus() {
         renderMetricDetails(data.episode, 'episode-details');
         renderMetricDetails(data.actor, 'actor-details');
         renderMetricDetails(data.performance, 'perf-details');
+
+        // 渲染分段成功率
+        renderSuccessByLength(data.success_by_length);
 
         // 更新刷新时间
         document.getElementById('last-refresh').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
