@@ -7,6 +7,8 @@
         <td>{{ p.scenario }}</td>
         <td>{{ p.subtype }}</td>
         <td>{{ p.nodes|length }}</td>
+        <td>{{ p.effective_turn_count if p.effective_turn_count else '-' }}</td>
+        <td {% if p.rl_steps and p.rl_steps > 20 %}style="color: #f59e0b; font-weight: bold;"{% endif %}>{{ p.rl_steps if p.rl_steps else '-' }}</td>
         <td style="color: {% if p.business_outcome.has_order %}#10b981{% else %}#6b7280{% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
         <td>¥{{ p.business_outcome.order_amount }}</td>
     </tr>
@@ -14,7 +16,7 @@
 </tbody>
 <tfoot id="playbook-tfoot">
     <tr>
-        <td colspan="7">
+        <td colspan="9">
             <span style="color: #6b7280">Total: <strong style="color: #f0f2f5">{{ total }}</strong> | Page <strong style="color: #f0f2f5">{{ page }}</strong> / <strong style="color: #f0f2f5">{{ total_pages }}</strong></span>
             {% if page > 1 %}
             <button hx-get="" hx-vals='{"page": {{ page - 1 }}}' hx-target="#playbook-tbody" hx-swap="outerHTML" style="margin-left: 1rem">← Prev</button>

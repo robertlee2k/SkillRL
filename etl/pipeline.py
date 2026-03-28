@@ -170,6 +170,18 @@ def build_playbook(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         logger.warning(f"[{session_id}] No turns to build playbook from")
         return None
 
+    # 计算有效对话轮次（经过清洗后的 User-Agent 交替回合数）
+    # 每个回合包含一个 User turn + 一个 Agent turn，所以 effective_turn_count = turns 总数 / 2
+    # 但更准确的定义是：turns 列表中的条目数（每个条目代表一个角色的一轮发言）
+    effective_turn_count = len(turns)
+
+    # RL steps = Agent 需要执行的 action 数量 = User turns 数量
+    # 因为每个 User turn 触发一次 Agent 响应
+    # 如果 turns 以 User 开头且结尾（标准情况）：rl_steps = (effective_turn_count + 1) // 2
+    # 实际上：rl_steps = count of User turns
+    user_turn_count = sum(1 for t in turns if t['role'] == 'User')
+    rl_steps = user_turn_count
+
     # Format conversation for LLM
     conversation_lines = []
     for turn in turns:
@@ -196,6 +208,8 @@ def build_playbook(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             'session_id': session_id,  # 用于可视化溯源
             'scenario': scenario,
             'subtype': 'general',
+            'effective_turn_count': effective_turn_count,  # 总 turns 数（User + Agent）
+            'rl_steps': rl_steps,  # Agent 需执行的 action 数 = User turns 数
             'business_outcome': {
                 'has_order': session.get('has_order', False),
                 'order_amount': session.get('order_amount', 0.0)

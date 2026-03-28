@@ -25,6 +25,9 @@ class Playbook(BaseModel):
     business_outcome: BusinessOutcome
     initial_slots: dict
     nodes: dict[str, Node]
+    # 新增字段（可选，兼容旧数据）
+    effective_turn_count: Optional[int] = None  # 总 turns 数（User + Agent）
+    rl_steps: Optional[int] = None  # Agent action 数 = User turns 数
 
 
 class Message(BaseModel):
@@ -40,3 +43,20 @@ class Session(BaseModel):
     has_order: bool
     order_amount: float
     messages: list[Message]
+
+
+class TurnStats(BaseModel):
+    """轮次统计信息"""
+    total: int
+    with_turn_info: int  # 有 rl_steps 字段的 playbook 数量
+    min_turns: int
+    max_turns: int
+    avg_turns: float
+    min_steps: int
+    max_steps: int
+    avg_steps: float
+    p90_steps: int
+    p95_steps: int
+    p99_steps: int
+    over_20_steps: int  # 超过 max_steps=20 的数量
+    steps_distribution: dict[int, int]  # steps -> count

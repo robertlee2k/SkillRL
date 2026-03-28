@@ -6,6 +6,28 @@
 <a href="/">← Back to list</a>
 
 <h1>Playbook: <code>{{ playbook.playbook_id }}</code></h1>
+
+<!-- 轮次信息卡片 -->
+{% if playbook.effective_turn_count or playbook.rl_steps %}
+<div class="turn-info-card">
+    <div class="turn-stat">
+        <span class="turn-label">Effective Turns:</span>
+        <span class="turn-value">{{ playbook.effective_turn_count }}</span>
+    </div>
+    <div class="turn-stat {% if playbook.rl_steps and playbook.rl_steps > 20 %}warning{% endif %}">
+        <span class="turn-label">RL Steps:</span>
+        <span class="turn-value">{{ playbook.rl_steps }}</span>
+        {% if playbook.rl_steps and playbook.rl_steps > 20 %}
+        <span class="turn-warning">⚠️ Exceeds max_steps=20</span>
+        {% endif %}
+    </div>
+    <div class="turn-stat">
+        <span class="turn-label">Nodes:</span>
+        <span class="turn-value">{{ playbook.nodes|length }}</span>
+    </div>
+</div>
+{% endif %}
+
 <div class="meta">
     <span>Session: <code>{{ playbook.session_id }}</code></span>
     <span>Scenario: <strong>{{ playbook.scenario }}</strong></span>

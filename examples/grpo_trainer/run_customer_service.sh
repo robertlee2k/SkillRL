@@ -30,12 +30,14 @@ export WANDB_NAME="customer_service_grpo_baseline"
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
-# 预处理客服场景数据 （这里数据是5784条）
+# 预处理客服场景数据 （恢复长session后共5784条）
+# 注意：val_data_size 必须能被 val_batch_size 整除！
+# val_batch_size=128, 所以 val_data_size 应该是 128 的倍数 (例如 128, 256, 384, ..., 1536)
 python3 scripts/prepare_cs_data.py \
-    --playbook_path outputs/playbooks_full.json \
+    --playbook_path outputs/playbooks_all.json \
     --output_dir $HOME/data/verl-agent/customer_service \
-    --train_data_size 3800 \
-    --val_data_size 1200
+    --train_data_size 4248 \
+    --val_data_size 1536
 
 # 【合理的 Batch Size，加速单步迭代】
 #  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │    有订单    │

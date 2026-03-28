@@ -5,6 +5,46 @@
 {% block content %}
 <h1>Playbooks</h1>
 
+<!-- 统计信息卡片 -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ turn_stats.total }}</div>
+        <div class="stat-label">Total Playbooks</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ turn_stats.with_turn_info }}</div>
+        <div class="stat-label">With Turn Info</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ turn_stats.avg_steps | round(1) }}</div>
+        <div class="stat-label">Avg RL Steps</div>
+    </div>
+    <div class="stat-card {% if turn_stats.over_20_steps > 0 %}warning{% endif %}">
+        <div class="stat-value">{{ turn_stats.over_20_steps }}</div>
+        <div class="stat-label">Over 20 Steps</div>
+    </div>
+</div>
+
+<!-- RL Steps 分布图 -->
+{% if turn_stats.steps_distribution %}
+<div class="distribution-chart">
+    <h3>RL Steps Distribution</h3>
+    <div class="bar-chart">
+        {% for steps, count in turn_stats.steps_distribution.items() | sort %}
+        <div class="bar-container">
+            <div class="bar-label">{{ steps }}</div>
+            <div class="bar" style="width: {{ (count / turn_stats.total * 100) | round(1) }}%; {% if steps > 20 %}background: #f59e0b;{% endif %}"></div>
+            <div class="bar-value">{{ count }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="legend">
+        <span class="legend-item"><span class="legend-color" style="background: #6366f1"></span> Normal</span>
+        <span class="legend-item"><span class="legend-color" style="background: #f59e0b"></span> Over 20 (will truncate)</span>
+    </div>
+</div>
+{% endif %}
+
 <form id="filter-form" hx-get="/api/playbooks-table" hx-target="#playbook-tbody" hx-push-url="true" hx-trigger="submit">
     <div class="filters">
         <input type="text" name="search" id="search-input" placeholder="Search playbook_id, session_id, scenario..."
@@ -35,6 +75,13 @@
             {% for s in filters.sentiments %}
             <option value="{{ s }}" {% if s == current_filters.sentiment %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
+        </select>
+
+        <select name="rl_steps_max" id="rl-steps-select">
+            <option value="">All RL Steps</option>
+            <option value="10" {% if current_filters.rl_steps_max == "10" %}selected{% endif %}>≤ 10 steps</option>
+            <option value="15" {% if current_filters.rl_steps_max == "15" %}selected{% endif %}>≤ 15 steps</option>
+            <option value="20" {% if current_filters.rl_steps_max == "20" %}selected{% endif %}>≤ 20 steps (max)</option>
         </select>
 
         <button type="button" onclick="window.location='/'">Reset</button>
@@ -69,6 +116,8 @@ document.querySelectorAll('#filter-form select').forEach(function(select) {
             <th>Scenario</th>
             <th>Subtype</th>
             <th>Nodes</th>
+            <th>Turns</th>
+            <th>RL Steps</th>
             <th>Order</th>
             <th>Amount</th>
         </tr>
@@ -81,6 +130,8 @@ document.querySelectorAll('#filter-form select').forEach(function(select) {
             <td>{{ p.scenario }}</td>
             <td>{{ p.subtype }}</td>
             <td>{{ p.nodes|length }}</td>
+            <td>{{ p.effective_turn_count if p.effective_turn_count else '-' }}</td>
+            <td {% if p.rl_steps and p.rl_steps > 20 %}style="color: #f59e0b; font-weight: bold;"{% endif %}>{{ p.rl_steps if p.rl_steps else '-' }}</td>
             <td style="color: {% if p.business_outcome.has_order %}#10b981{% else %}#6b7280{% endif %}">{{ "Yes" if p.business_outcome.has_order else "No" }}</td>
             <td>¥{{ p.business_outcome.order_amount }}</td>
         </tr>
@@ -88,13 +139,13 @@ document.querySelectorAll('#filter-form select').forEach(function(select) {
     </tbody>
     <tfoot>
         <tr>
-            <td colspan="7">
+            <td colspan="9">
                 <span style="color: #6b7280">Total: <strong style="color: #f0f2f5">{{ total }}</strong> | Page <strong style="color: #f0f2f5">{{ page }}</strong> / <strong style="color: #f0f2f5">{{ total_pages }}</strong></span>
                 {% if page > 1 %}
-                <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}" style="margin-left: 1rem">← Prev</a>
+                <a href="?page={{ page - 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}&rl_steps_max={{ current_filters.rl_steps_max }}" style="margin-left: 1rem">← Prev</a>
                 {% endif %}
                 {% if page < total_pages %}
-                <a href="?page={{ page + 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}" style="margin-left: 0.5rem">Next →</a>
+                <a href="?page={{ page + 1 }}&search={{ current_filters.search }}&scenario={{ current_filters.scenario }}&subtype={{ current_filters.subtype }}&has_order={{ current_filters.has_order }}&sentiment={{ current_filters.sentiment }}&rl_steps_max={{ current_filters.rl_steps_max }}" style="margin-left: 0.5rem">Next →</a>
                 {% endif %}
             </td>
         </tr>

@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from ..data import data_loader
 from ..templates_config import templates
 from ..config import PAGE_SIZE
+from ..models import TurnStats
 
 router = APIRouter()
 
@@ -20,7 +21,63 @@ def get_unique_values() -> dict:
         for p in playbooks
         for node in p.nodes.values()
     ))
-    return {"scenarios": scenarios, "subtypes": subtypes, "sentiments": sentiments}
+
+    # 获取 rl_steps 范围
+    steps_values = [p.rl_steps for p in playbooks if p.rl_steps is not None]
+    max_steps = max(steps_values) if steps_values else 20
+
+    return {
+        "scenarios": scenarios,
+        "subtypes": subtypes,
+        "sentiments": sentiments,
+        "max_rl_steps": max_steps
+    }
+
+
+def compute_turn_stats() -> TurnStats:
+    """计算轮次统计信息"""
+    playbooks = data_loader.playbooks
+
+    steps_values = [p.rl_steps for p in playbooks if p.rl_steps is not None]
+    turns_values = [p.effective_turn_count for p in playbooks if p.effective_turn_count is not None]
+
+    if not steps_values:
+        return TurnStats(
+            total=len(playbooks),
+            with_turn_info=0,
+            min_turns=0, max_turns=0, avg_turns=0,
+            min_steps=0, max_steps=0, avg_steps=0,
+            p90_steps=0, p95_steps=0, p99_steps=0,
+            over_20_steps=0,
+            steps_distribution={}
+        )
+
+    # 计算 percentiles
+    sorted_steps = sorted(steps_values)
+    n = len(sorted_steps)
+    p90 = sorted_steps[int(n * 0.90)]
+    p95 = sorted_steps[int(n * 0.95)]
+    p99 = sorted_steps[int(n * 0.99)]
+
+    # 计算 distribution
+    from collections import Counter
+    steps_dist = dict(Counter(steps_values))
+
+    return TurnStats(
+        total=len(playbooks),
+        with_turn_info=len(steps_values),
+        min_turns=min(turns_values) if turns_values else 0,
+        max_turns=max(turns_values) if turns_values else 0,
+        avg_turns=sum(turns_values) / len(turns_values) if turns_values else 0,
+        min_steps=min(steps_values),
+        max_steps=max(steps_values),
+        avg_steps=sum(steps_values) / len(steps_values),
+        p90_steps=p90,
+        p95_steps=p95,
+        p99_steps=p99,
+        over_20_steps=sum(1 for s in steps_values if s > 20),
+        steps_distribution=steps_dist
+    )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -32,6 +89,7 @@ async def index(
     subtype: Optional[str] = Query(None),
     has_order: Optional[str] = Query(None),
     sentiment: Optional[str] = Query(None),
+    rl_steps_max: Optional[int] = Query(None),  # 新增：rl_steps 过滤
 ):
     """首页 - Playbook 列表（支持URL参数）"""
     playbooks, total = filter_playbooks(
@@ -40,6 +98,7 @@ async def index(
         subtype=subtype,
         has_order=has_order,
         sentiment=sentiment,
+        rl_steps_max=rl_steps_max,
         page=page,
     )
 
@@ -52,12 +111,14 @@ async def index(
             "page": page,
             "total_pages": (total + PAGE_SIZE - 1) // PAGE_SIZE,
             "filters": get_unique_values(),
+            "turn_stats": compute_turn_stats(),
             "current_filters": {
                 "search": search or "",
                 "scenario": scenario or "",
                 "subtype": subtype or "",
                 "has_order": has_order or "",
                 "sentiment": sentiment or "",
+                "rl_steps_max": rl_steps_max or "",
             }
         }
     )
@@ -72,6 +133,7 @@ async def playbooks_table(
     subtype: Optional[str] = Query(None),
     has_order: Optional[str] = Query(None),
     sentiment: Optional[str] = Query(None),
+    rl_steps_max: Optional[int] = Query(None),
 ):
     """获取 playbook 列表表格HTML（HTMX用）"""
     playbooks, total = filter_playbooks(
@@ -80,6 +142,7 @@ async def playbooks_table(
         subtype=subtype,
         has_order=has_order,
         sentiment=sentiment,
+        rl_steps_max=rl_steps_max,
         page=page,
     )
 
@@ -101,6 +164,7 @@ def filter_playbooks(
     subtype: Optional[str],
     has_order: Optional[str],
     sentiment: Optional[str],
+    rl_steps_max: Optional[int],
     page: int,
 ) -> tuple[list, int]:
     """筛选 playbook"""
@@ -135,6 +199,13 @@ def filter_playbooks(
         playbooks = [
             p for p in playbooks
             if any(node.sentiment == sentiment for node in p.nodes.values())
+        ]
+
+    # rl_steps 筛选（新增）
+    if rl_steps_max is not None:
+        playbooks = [
+            p for p in playbooks
+            if p.rl_steps is not None and p.rl_steps <= rl_steps_max
         ]
 
     total = len(playbooks)
