@@ -489,12 +489,12 @@ function renderSuccessByLength(metrics, valMetrics) {
         return;
     }
 
-    // 定义分段 (匹配 tensorboard 中的 key)
+    // 定义分段 (匹配 tensorboard 中的 key，使用 target_len 避免幸存者偏差)
     const segments = [
-        { tag: 'episode/success_rate/len_1_5', valTag: 'val/success_rate/len_1_5', label: 'Short', range: '1-5 turns' },
-        { tag: 'episode/success_rate/len_6_10', valTag: 'val/success_rate/len_6_10', label: 'Medium', range: '6-10 turns' },
-        { tag: 'episode/success_rate/len_11_15', valTag: 'val/success_rate/len_11_15', label: 'Long', range: '11-15 turns' },
-        { tag: 'episode/success_rate/len_16_20', valTag: 'val/success_rate/len_16_20', label: 'Extreme', range: '16-20 turns' },
+        { tag: 'episode/success_rate/target_len_1_5', valTag: 'val/success_rate/target_len_1_5', label: 'Short', range: '1-5 turns' },
+        { tag: 'episode/success_rate/target_len_6_10', valTag: 'val/success_rate/target_len_6_10', label: 'Medium', range: '6-10 turns' },
+        { tag: 'episode/success_rate/target_len_11_15', valTag: 'val/success_rate/target_len_11_15', label: 'Long', range: '11-15 turns' },
+        { tag: 'episode/success_rate/target_len_16_20', valTag: 'val/success_rate/target_len_16_20', label: 'Extreme', range: '16-20 turns' },
     ];
 
     let html = '';

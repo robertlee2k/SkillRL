@@ -127,19 +127,19 @@ async def get_training_status(log_dir: str = Query(None)):
             "perf/mfu/actor",
             "perf/max_memory_allocated_gb",
         ],
-        # 分段成功率
+        # 分段成功率（使用 target_len 避免幸存者偏差）
         "success_by_length": [
-            "episode/success_rate/len_1_5",
-            "episode/success_rate/len_6_10",
-            "episode/success_rate/len_11_15",
-            "episode/success_rate/len_16_20",
+            "episode/success_rate/target_len_1_5",
+            "episode/success_rate/target_len_6_10",
+            "episode/success_rate/target_len_11_15",
+            "episode/success_rate/target_len_16_20",
         ],
         # 验证集分段成功率
         "val_success_by_length": [
-            "val/success_rate/len_1_5",
-            "val/success_rate/len_6_10",
-            "val/success_rate/len_11_15",
-            "val/success_rate/len_16_20",
+            "val/success_rate/target_len_1_5",
+            "val/success_rate/target_len_6_10",
+            "val/success_rate/target_len_11_15",
+            "val/success_rate/target_len_16_20",
         ],
     }
 
