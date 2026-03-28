@@ -274,32 +274,31 @@ class CustomerServiceEnv:
             self.state.slots.update(slot_updates)
 
         observation = self._get_observation()
+
+        # 获取剧本真实的预设轮次（Ground Truth Length）
+        target_steps = self.current_playbook.get('rl_steps', 0)
+
         info = {
             'fell_back': self.state.fell_back,
             'sentiment': nodes.get(next_node, {}).get('sentiment', 'neutral'),
             'visited_nodes': len(self.state.visited_nodes),
             'patience': self.state.patience,
-            # 【新增：补齐框架需要的成功率与业务指标】
             'won': self.state.won,
             'scenario': self.state.scenario,
             'business_outcome': self.current_playbook.get('business_outcome', {})
         }
 
-        # 【新增：按轮次分桶记录成功率，仅在对话结束时记录】
-        current_steps = len(self.state.action_history)
+        # 【修复：按剧本真实长度分桶记录成功率，避免幸存者偏差】
+        # 使用 rl_steps（预设轮次）而非 current_steps（实际存活步数）进行分桶
         if self.state.done:
-            # 短对话 (1-5步)：考察基础意图识别
-            if current_steps <= 5:
-                info['success_rate/len_1_5'] = 1.0 if self.state.won else 0.0
-            # 中等对话 (6-10步)：考察中程状态跟踪
-            elif current_steps <= 10:
-                info['success_rate/len_6_10'] = 1.0 if self.state.won else 0.0
-            # 长对话 (11-15步)：考察复杂业务拉扯与耐心
-            elif current_steps <= 15:
-                info['success_rate/len_11_15'] = 1.0 if self.state.won else 0.0
-            # 极限对话 (16-20步)：考察极限上下文记忆与挽回能力
+            if target_steps <= 5:
+                info['success_rate/target_len_1_5'] = 1.0 if self.state.won else 0.0
+            elif target_steps <= 10:
+                info['success_rate/target_len_6_10'] = 1.0 if self.state.won else 0.0
+            elif target_steps <= 15:
+                info['success_rate/target_len_11_15'] = 1.0 if self.state.won else 0.0
             else:
-                info['success_rate/len_16_20'] = 1.0 if self.state.won else 0.0
+                info['success_rate/target_len_16_20'] = 1.0 if self.state.won else 0.0
 
         return observation, step_reward, self.state.done, info
 
