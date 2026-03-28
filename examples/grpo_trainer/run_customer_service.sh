@@ -26,17 +26,19 @@ export WANDB_API_KEY="7dfb306b2aa3742f6839"  # <--- 请务必填入你的 WandB 
 export WANDB_NAME="customer_service_grpo_baseline"
 
 # ==========================================
-# 3. 实验规模设置
+# 3. 实验规模设置（统一参数体系）
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
+# 【关键参数定义 - 所有下游命令统一引用】
+train_batch_size=64   # 训练批次大小（drop-last对齐）
+val_batch_size=128    # 验证批次大小（drop-last对齐）
+val_ratio=0.15        # 验证集比例
+max_rl_steps=20       # RL steps上限阈值（超过的playbook被丢弃）
+seed=42               # 随机种子
+group_size=8          # Parallel rollouts per episode
+
 # 预处理客服场景数据（工业级数据准备引擎）
-# 新参数体系（ratio-driven）：
-#   --val_ratio: 验证集比例
-#   --train_batch_size: 训练批次大小（用于drop-last对齐）
-#   --val_batch_size: 验证批次大小（用于drop-last对齐）
-#   --max_rl_steps: RL steps上限阈值（超过的playbook被丢弃）
-#
 # 输出结果（基于 playbooks_all.json 共5784条）：
 #  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │
 #  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┤
@@ -51,17 +53,11 @@ num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment w
 python3 scripts/prepare_cs_data.py \
     --playbook_path outputs/playbooks_all.json \
     --output_dir $HOME/data/verl-agent/customer_service \
-    --val_ratio 0.15 \
-    --train_batch_size 64 \
-    --val_batch_size 128 \
-    --max_rl_steps 20 \
-    --seed 42
-
-# 【Batch Size 配置】
-# 训练数据经过drop-last对齐，确保batch不出现size mismatch
-train_data_size=64  # 必须与 prepare_cs_data.py 的 --train_batch_size 一致
-val_data_size=128   # 必须与 prepare_cs_data.py 的 --val_batch_size 一致
-group_size=8        # Parallel rollouts per episode
+    --val_ratio $val_ratio \
+    --train_batch_size $train_batch_size \
+    --val_batch_size $val_batch_size \
+    --max_rl_steps $max_rl_steps \
+    --seed $seed
 
 # ==========================================
 # 4. 启动 verl GRPO 训练
@@ -75,8 +71,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$HOME/data/verl-agent/customer_service/train.parquet \
     data.val_files=$HOME/data/verl-agent/customer_service/test.parquet \
-    data.train_batch_size=$train_data_size \
-    data.val_batch_size=$val_data_size \
+    data.train_batch_size=$train_batch_size \
+    data.val_batch_size=$val_batch_size \
     data.max_prompt_length=16384 \
     data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
@@ -85,7 +81,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=$train_batch_size \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.1 \
@@ -114,7 +110,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     env.env_name=CustomerService \
     env.seed=0 \
-    env.max_steps=20 \
+    env.max_steps=$max_rl_steps \
     env.rollout.n=$group_size \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     +env.use_fallback_projection=False \
