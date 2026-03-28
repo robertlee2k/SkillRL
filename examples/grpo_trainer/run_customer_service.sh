@@ -30,24 +30,38 @@ export WANDB_NAME="customer_service_grpo_baseline"
 # ==========================================
 num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment worker.
 
-# 预处理客服场景数据 （恢复长session后共5784条）
-# 注意：val_data_size 必须能被 val_batch_size 整除！
-# val_batch_size=128, 所以 val_data_size 应该是 128 的倍数 (例如 128, 256, 384, ..., 1536)
+# 预处理客服场景数据（工业级数据准备引擎）
+# 新参数体系（ratio-driven）：
+#   --val_ratio: 验证集比例
+#   --train_batch_size: 训练批次大小（用于drop-last对齐）
+#   --val_batch_size: 验证批次大小（用于drop-last对齐）
+#   --max_rl_steps: RL steps上限阈值（超过的playbook被丢弃）
+#
+# 输出结果（基于 playbooks_all.json 共5784条）：
+#  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │
+#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┤
+#  │ 训练集 │ 4864 │ 3842 (79.0%) │ 679 (14.0%) │ 207 (4.3%) │ 136 (2.8%) │ 76 batches × 64
+#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┤
+#  │ 验证集 │  768 │ 613 (79.8%)  │ 103 (13.4%) │ 30 (3.9%)  │ 22 (2.9%)  │ 6 batches × 128
+#
+# 关键指标：
+#   - RL steps过滤保留率: 99.98% (仅丢弃1条 rl_steps=21)
+#   - 分层抽样误差: Train <0.03%, Val <0.15%
+#   - Batch对齐: 两个数据集都完美对齐batch_size
 python3 scripts/prepare_cs_data.py \
     --playbook_path outputs/playbooks_all.json \
     --output_dir $HOME/data/verl-agent/customer_service \
-    --train_data_size 4248 \
-    --val_data_size 1536
+    --val_ratio 0.15 \
+    --train_batch_size 64 \
+    --val_batch_size 128 \
+    --max_rl_steps 20 \
+    --seed 42
 
-# 【合理的 Batch Size，加速单步迭代】
-#  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │    有订单    │
-#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┼──────────────┤
-#  │ 训练集 │ 4000 │ 3150 (78.8%) │ 568 (14.2%) │ 179 (4.5%) │ 103 (2.6%) │ 1071 (26.8%) │
-#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┼──────────────┤
-#  │ 验证集 │ 1784 │ 1434 (80.4%) │ 229 (12.8%) │ 77 (4.3%)  │ 44 (2.5%)  │ 486 (27.2%)
-train_data_size=64  # 我们的train数据有4000条，估计2500条就能收敛
-val_data_size=128
-group_size=8         # Parallel rollouts per episode
+# 【Batch Size 配置】
+# 训练数据经过drop-last对齐，确保batch不出现size mismatch
+train_data_size=64  # 必须与 prepare_cs_data.py 的 --train_batch_size 一致
+val_data_size=128   # 必须与 prepare_cs_data.py 的 --val_batch_size 一致
+group_size=8        # Parallel rollouts per episode
 
 # ==========================================
 # 4. 启动 verl GRPO 训练
