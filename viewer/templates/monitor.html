@@ -476,29 +476,36 @@ function renderMetricDetails(metrics, containerId) {
     container.innerHTML = html;
 }
 
-function renderSuccessByLength(metrics) {
+function renderSuccessByLength(metrics, valMetrics) {
     const container = document.getElementById('success-by-length-chart');
     const detailsContainer = document.getElementById('success-by-length-details');
 
-    if (!metrics || Object.keys(metrics).length === 0) {
+    // 合并训练和验证的分段成功率
+    const allMetrics = { ...metrics, ...valMetrics };
+
+    if (!allMetrics || Object.keys(allMetrics).length === 0) {
         container.innerHTML = '<p style="color: #6b7280; text-align: center; padding: 2rem;">No data yet (will appear after training)</p>';
         detailsContainer.innerHTML = '';
         return;
     }
 
-    // 定义分段
+    // 定义分段 (匹配 tensorboard 中的 key)
     const segments = [
-        { tag: 'success_rate/len_1_5', label: 'Short', range: '1-5 turns', description: 'Basic intent recognition' },
-        { tag: 'success_rate/len_6_10', label: 'Medium', range: '6-10 turns', description: 'Mid-range state tracking' },
-        { tag: 'success_rate/len_11_15', label: 'Long', range: '11-15 turns', description: 'Complex negotiation' },
-        { tag: 'success_rate/len_16_20', label: 'Extreme', range: '16-20 turns', description: 'Limit context memory' },
+        { tag: 'episode/success_rate/len_1_5', valTag: 'val/success_rate/len_1_5', label: 'Short', range: '1-5 turns' },
+        { tag: 'episode/success_rate/len_6_10', valTag: 'val/success_rate/len_6_10', label: 'Medium', range: '6-10 turns' },
+        { tag: 'episode/success_rate/len_11_15', valTag: 'val/success_rate/len_11_15', label: 'Long', range: '11-15 turns' },
+        { tag: 'episode/success_rate/len_16_20', valTag: 'val/success_rate/len_16_20', label: 'Extreme', range: '16-20 turns' },
     ];
 
     let html = '';
     let detailsHtml = '';
 
     segments.forEach(seg => {
-        const data = metrics[seg.tag];
+        // 优先用验证集，没有就用训练集
+        const valData = valMetrics?.[seg.valTag];
+        const trainData = metrics?.[seg.tag];
+        const data = valData || trainData;
+
         const value = data?.current ?? null;
         const displayValue = value !== null ? (value * 100).toFixed(1) + '%' : '-';
 
@@ -512,6 +519,9 @@ function renderSuccessByLength(metrics) {
         // 进度条宽度
         const barWidth = value !== null ? Math.min(value * 100, 100) : 0;
 
+        // 来源标签
+        const sourceLabel = valData ? 'val' : (trainData ? 'train' : '');
+
         html += `
             <div class="length-bar-card">
                 <div class="bar-label">${seg.label}</div>
@@ -523,7 +533,7 @@ function renderSuccessByLength(metrics) {
             </div>
         `;
 
-        detailsHtml += `<div class="metric-row"><span class="metric-name">${seg.label} (${seg.range})</span><span class="metric-value">${displayValue}</span></div>`;
+        detailsHtml += `<div class="metric-row"><span class="metric-name">${seg.label} (${seg.range}) ${sourceLabel}</span><span class="metric-value">${displayValue}</span></div>`;
     });
 
     container.innerHTML = html;
@@ -586,7 +596,7 @@ async function loadTrainingStatus() {
         renderMetricDetails(data.performance, 'perf-details');
 
         // 渲染分段成功率
-        renderSuccessByLength(data.success_by_length);
+        renderSuccessByLength(data.success_by_length, data.val_success_by_length);
 
         // 更新刷新时间
         document.getElementById('last-refresh').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;

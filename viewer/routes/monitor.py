@@ -82,6 +82,7 @@ async def get_training_status(log_dir: str = Query(None)):
         "critic": {},      # Critic指标
         "performance": {}, # 性能指标
         "success_by_length": {},  # 分段成功率
+        "val_success_by_length": {},  # 验证集分段成功率
         "recent_playbooks": [],
     }
 
@@ -128,10 +129,17 @@ async def get_training_status(log_dir: str = Query(None)):
         ],
         # 分段成功率
         "success_by_length": [
-            "success_rate/len_1_5",
-            "success_rate/len_6_10",
-            "success_rate/len_11_15",
-            "success_rate/len_16_20",
+            "episode/success_rate/len_1_5",
+            "episode/success_rate/len_6_10",
+            "episode/success_rate/len_11_15",
+            "episode/success_rate/len_16_20",
+        ],
+        # 验证集分段成功率
+        "val_success_by_length": [
+            "val/success_rate/len_1_5",
+            "val/success_rate/len_6_10",
+            "val/success_rate/len_11_15",
+            "val/success_rate/len_16_20",
         ],
     }
 
