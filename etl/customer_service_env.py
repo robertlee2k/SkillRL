@@ -38,6 +38,15 @@ HIGH_RISK_SKILLS = {
     'aft_initiate_exchange', 'aft_compensate'
 }
 
+# 安全的沟通与兜底动作（不推进业务，但不会激怒买家）
+SAFE_FALLBACK_SKILLS = {
+    'gen_clarify',    # 澄清意图
+    'gen_empathize',  # 安抚共情
+    'gen_greet',      # 寒暄打招呼
+    'gen_apologize',  # 道歉
+    'gen_hold'        # 请稍等
+}
+
 # 情绪量化分值（用于计算 Sentiment Delta）
 SENTIMENT_SCORES = {
     'happy': 1.0,
@@ -60,6 +69,7 @@ class EnvState:
     fell_back: bool = False
     scenario: str = 'unknown'
     patience: int = 2  # 客户耐心值，初始允许犯错 2 次
+    safe_action_consecutive_count: int = 0  # 连续使用安全话术的次数
 
 
 class CustomerServiceEnv:
@@ -102,7 +112,8 @@ class CustomerServiceEnv:
             won=False,
             fell_back=False,
             scenario=self.current_playbook.get('scenario', 'unknown'),
-            patience=2
+            patience=2,
+            safe_action_consecutive_count=0
         )
 
         observation = self._get_observation()
@@ -178,19 +189,49 @@ class CustomerServiceEnv:
             logger.debug(f"Tier 1 格式错误: {action}, 剩余耐心: {self.state.patience}")
 
         elif action not in transitions:
-            # Tier 2: 业务偏航 (Context Error)
-            self.state.fell_back = True
-            self.state.patience -= 1
-            step_reward -= 0.5
-            # 【核心修复】：剥夺买家视角的违和感，替换为绝对客观的系统报错
-            self.state.dialogue_history.append({
-                'role': 'system',
-                'content': f"【系统判定】: 动作 [{action}] 不符合当前对话所处的业务节点。请重新分析买家最新意图，并选择其他合理的动作。"
-            })
-            logger.debug(f"Tier 2 业务偏航: {action}, 剩余耐心: {self.state.patience}")
+            # Tier 2: 动作没命中正确路径，根据其语义属性来判定惩罚力度
+
+            if action in SAFE_FALLBACK_SKILLS:
+                # 【宽容判定：安全话术】
+                self.state.fell_back = True
+                self.state.safe_action_consecutive_count += 1
+
+                # 动态递增惩罚机制：防滥用
+                if self.state.safe_action_consecutive_count <= 2:
+                    # 前两次：正常宽容，不扣耐心，轻微拖延惩罚
+                    step_reward -= 0.1
+                    msg = f"【系统判定】: 动作 [{action}] 是安全的沟通话术，但未能推进核心业务。请根据上下文尽快切入正题。"
+                elif self.state.safe_action_consecutive_count <= 4:
+                    # 3-4次：警告，加重惩罚，依然不扣耐心
+                    step_reward -= 0.3
+                    msg = f"【系统判定】: 警告！连续 {self.state.safe_action_consecutive_count} 次使用沟通话术，已造成对话拖延。请立即执行有效业务动作。"
+                else:
+                    # 5次以上：买家被激怒，严厉打击
+                    self.state.patience -= 1
+                    step_reward -= 0.5
+                    msg = f"【系统判定】: 严重警告！过度滥用兜底话术 [{action}] 已引起买家反感（耐心-1）。必须立即选择业务动作推进流程！"
+
+                self.state.dialogue_history.append({'role': 'system', 'content': msg})
+                logger.debug(f"兜底动作: {action}, 连续次数: {self.state.safe_action_consecutive_count}, 剩余耐心: {self.state.patience}")
+
+            else:
+                # 【致命打击：业务偏航】
+                # 重置安全计数器，因为模型至少"尝试"了去做业务动作
+                self.state.safe_action_consecutive_count = 0
+                self.state.fell_back = True
+                self.state.patience -= 1
+                step_reward -= 0.5
+
+                self.state.dialogue_history.append({
+                    'role': 'system',
+                    'content': f"【系统判定】: 业务偏航！动作 [{action}] 在当前节点不可用。请重新分析并选择有效业务动作。"
+                })
+                logger.debug(f"Tier 2 业务偏航: {action}, 剩余耐心: {self.state.patience}")
 
         else:
             # 合法动作
+            # 重置安全计数器，一旦选对动作，计数器就清零重置
+            self.state.safe_action_consecutive_count = 0
             next_node = transitions[action]
             if next_node not in self.state.visited_nodes:
                 step_reward += 0.5  # 防刷分：仅首次访问给分
