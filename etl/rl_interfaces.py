@@ -809,6 +809,11 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
                 else:
                     success['order_rate'].append(0.0)
 
+                # Extract success rate by turn length (分段成功率)
+                for key in info:
+                    if key.startswith('success_rate/'):
+                        success[key].append(float(info[key]))
+
                 return
 
 
