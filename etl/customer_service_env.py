@@ -182,9 +182,10 @@ class CustomerServiceEnv:
             self.state.fell_back = True
             self.state.patience -= 1
             step_reward -= 0.5
+            # 【核心修复】：剥夺买家视角的违和感，替换为绝对客观的系统报错
             self.state.dialogue_history.append({
-                'role': 'buyer',
-                'content': '你回答的好像不对吧？请仔细看看我的问题。'
+                'role': 'system',
+                'content': f"【系统判定】: 动作 [{action}] 不符合当前对话所处的业务节点。请重新分析买家最新意图，并选择其他合理的动作。"
             })
             logger.debug(f"Tier 2 业务偏航: {action}, 剩余耐心: {self.state.patience}")
 
@@ -242,6 +243,22 @@ class CustomerServiceEnv:
             'scenario': self.state.scenario,
             'business_outcome': self.current_playbook.get('business_outcome', {})
         }
+
+        # 【新增：按轮次分桶记录成功率，仅在对话结束时记录】
+        current_steps = len(self.state.action_history)
+        if self.state.done:
+            # 短对话 (1-5步)：考察基础意图识别
+            if current_steps <= 5:
+                info['success_rate/len_1_5'] = 1.0 if self.state.won else 0.0
+            # 中等对话 (6-10步)：考察中程状态跟踪
+            elif current_steps <= 10:
+                info['success_rate/len_6_10'] = 1.0 if self.state.won else 0.0
+            # 长对话 (11-15步)：考察复杂业务拉扯与耐心
+            elif current_steps <= 15:
+                info['success_rate/len_11_15'] = 1.0 if self.state.won else 0.0
+            # 极限对话 (16-20步)：考察极限上下文记忆与挽回能力
+            else:
+                info['success_rate/len_16_20'] = 1.0 if self.state.won else 0.0
 
         return observation, step_reward, self.state.done, info
 

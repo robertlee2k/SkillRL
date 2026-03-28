@@ -33,23 +33,12 @@ num_cpus_per_env_worker=0.1  # The CPU resource allocated for each environment w
 # 【关键参数定义 - 所有下游命令统一引用】
 train_batch_size=64   # 训练批次大小（drop-last对齐）
 val_batch_size=128    # 验证批次大小（drop-last对齐）
-val_ratio=0.15        # 验证集比例
+val_ratio=0.2        # 验证集比例
 max_rl_steps=20       # RL steps上限阈值（超过的playbook被丢弃）
-seed=42               # 随机种子
+seed=1688               # 随机种子
 group_size=8          # Parallel rollouts per episode
 
 # 预处理客服场景数据（工业级数据准备引擎）
-# 输出结果（基于 playbooks_all.json 共5784条）：
-#  │ 数据集 │ 数量 │    presale    │  aftersale  │  unknown   │ logistics  │
-#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┤
-#  │ 训练集 │ 4864 │ 3842 (79.0%) │ 679 (14.0%) │ 207 (4.3%) │ 136 (2.8%) │ 76 batches × 64
-#  ├───────┼──────┼──────────────┼─────────────┼────────────┼────────────┤
-#  │ 验证集 │  768 │ 613 (79.8%)  │ 103 (13.4%) │ 30 (3.9%)  │ 22 (2.9%)  │ 6 batches × 128
-#
-# 关键指标：
-#   - RL steps过滤保留率: 99.98% (仅丢弃1条 rl_steps=21)
-#   - 分层抽样误差: Train <0.03%, Val <0.15%
-#   - Batch对齐: 两个数据集都完美对齐batch_size
 python3 scripts/prepare_cs_data.py \
     --playbook_path outputs/playbooks_all.json \
     --output_dir $HOME/data/verl-agent/customer_service \
@@ -63,7 +52,7 @@ python3 scripts/prepare_cs_data.py \
 # 4. 启动 verl GRPO 训练
 # 【修改2：增加生成长度max_response_length到1024，防止思考被截断】
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
-# 【修改4: 压住KL】
+# 【修改4: KL惩罚改回0.05】
 # 【修改5: 改成bf16】
 # 【修改6: prompt长度翻倍到8192， max_num_batched_tokens到16384】
 # ==========================================
@@ -84,7 +73,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_mini_batch_size=$train_batch_size \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.1 \
+    actor_rollout_ref.actor.kl_loss_coef=0.05 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
