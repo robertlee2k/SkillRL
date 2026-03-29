@@ -899,7 +899,10 @@ def make_envs(config):
         )
         from functools import partial
 
-        playbook_path = config.env.get("playbook_path", "outputs/playbooks_new.json")
+        if "playbook_path" not in config.env:
+            raise ValueError("config.env.playbook_path is required but not specified. "
+                           "Please set env.playbook_path in your training config.")
+        playbook_path = config.env.playbook_path
 
         # Training envs need group_n scaling, validation envs do not (n=1)
         train_env_num = config.data.train_batch_size * group_n

@@ -98,6 +98,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.ref.fsdp_config.model_dtype=bf16 \
     algorithm.use_kl_in_reward=False \
     env.env_name=CustomerService \
+    env.playbook_path=outputs/playbooks_all.json \
     env.seed=0 \
     env.max_steps=$max_rl_steps \
     env.rollout.n=$group_size \

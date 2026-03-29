@@ -404,7 +404,7 @@ class CustomerServiceEnv:
         return "\n".join(lines)
 
 
-def create_env(playbook_path: str = "outputs/playbooks.json") -> CustomerServiceEnv:
+def create_env(playbook_path: str) -> CustomerServiceEnv:
     return CustomerServiceEnv(playbook_path)
 
 
