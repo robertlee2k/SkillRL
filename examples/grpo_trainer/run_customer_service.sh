@@ -52,7 +52,7 @@ python3 scripts/prepare_cs_data.py \
 # 4. 启动 verl GRPO 训练
 # 【修改2：增加生成长度max_response_length到1024，防止思考被截断】
 # 【修改3：关闭前置兜底，激活环境内的耐心系统】
-# 【修改4: KL惩罚改到0.03】
+# 【修改4: KL惩罚改到0.04】
 # 【修改5: 改成bf16】
 # 【修改6: prompt长度翻倍到8192， max_num_batched_tokens到16384】
 # ==========================================
@@ -73,7 +73,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_mini_batch_size=$train_batch_size \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.03 \
+    actor_rollout_ref.actor.kl_loss_coef=0.04 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
@@ -109,9 +109,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name='grpo_baseline' \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
-    trainer.save_freq=20 \
+    trainer.save_freq=30 \
     trainer.test_freq=5 \
     +trainer.val_freq=10 \
-    trainer.total_epochs=150 \
+    trainer.total_epochs=3 \
     trainer.val_before_train=True \
     trainer.default_local_dir=/home/bo.li/data/SkillRL/checkpoints/customer_service/grpo_baseline "$@"
