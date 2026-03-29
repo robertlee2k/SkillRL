@@ -37,10 +37,11 @@ val_ratio=0.2        # 验证集比例
 max_rl_steps=20       # RL steps上限阈值（超过的playbook被丢弃）
 seed=1688               # 随机种子
 group_size=8          # Parallel rollouts per episode
+playbook_path=outputs/playbooks_all.json  # Playbook数据文件路径
 
 # 预处理客服场景数据（工业级数据准备引擎）
 python3 scripts/prepare_cs_data.py \
-    --playbook_path outputs/playbooks_all.json \
+    --playbook_path $playbook_path \
     --output_dir $HOME/data/verl-agent/customer_service \
     --val_ratio $val_ratio \
     --train_batch_size $train_batch_size \
@@ -98,7 +99,7 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.ref.fsdp_config.model_dtype=bf16 \
     algorithm.use_kl_in_reward=False \
     env.env_name=CustomerService \
-    env.playbook_path=outputs/playbooks_all.json \
+    +env.playbook_path=$playbook_path \
     env.seed=0 \
     env.max_steps=$max_rl_steps \
     env.rollout.n=$group_size \
