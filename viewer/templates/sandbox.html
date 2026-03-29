@@ -10,6 +10,7 @@
             <label for="checkpoint-path">模型路径:</label>
             <input type="text" id="checkpoint-path" value="{{ default_checkpoint_path }}" placeholder="Checkpoint path">
             <button id="btn-load-model" class="btn-secondary">加载模型</button>
+            <button id="btn-unload-model" class="btn-danger" disabled>卸载模型</button>
             <span id="model-status" class="status-badge">未加载</span>
         </div>
         <div class="control-row">
@@ -245,6 +246,28 @@
 }
 
 .btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-danger {
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--accent-rose);
+    background: rgba(244, 63, 94, 0.1);
+    color: var(--accent-rose);
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: rgba(244, 63, 94, 0.2);
+    transform: translateY(-1px);
+}
+
+.btn-danger:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
@@ -581,6 +604,7 @@ const state = {
 const elements = {
     checkpointPath: document.getElementById('checkpoint-path'),
     btnLoadModel: document.getElementById('btn-load-model'),
+    btnUnloadModel: document.getElementById('btn-unload-model'),
     modelStatus: document.getElementById('model-status'),
     playbookSelect: document.getElementById('playbook-select'),
     btnInit: document.getElementById('btn-init'),
@@ -645,10 +669,12 @@ function updateModelStatus(isLoaded, path) {
     elements.modelStatus.textContent = isLoaded ? '已加载' : '未加载';
     elements.modelStatus.className = 'status-badge ' + (isLoaded ? 'loaded' : '');
     elements.btnInit.disabled = !isLoaded;
+    elements.btnUnloadModel.disabled = !isLoaded;
 }
 
 function bindEvents() {
     elements.btnLoadModel.addEventListener('click', handleLoadModel);
+    elements.btnUnloadModel.addEventListener('click', handleUnloadModel);
     elements.btnInit.addEventListener('click', handleInit);
     elements.btnStep.addEventListener('click', handleStep);
     elements.btnAutorun.addEventListener('click', handleAutorun);
@@ -683,6 +709,37 @@ async function handleLoadModel() {
         elements.modelStatus.className = 'status-badge error';
     } finally {
         elements.btnLoadModel.disabled = false;
+    }
+}
+
+async function handleUnloadModel() {
+    if (!confirm('确认要卸载模型吗？这将释放 GPU 显存。')) return;
+
+    elements.btnUnloadModel.disabled = true;
+    elements.modelStatus.textContent = '卸载中...';
+    elements.modelStatus.className = 'status-badge loading';
+
+    try {
+        const response = await fetch('/sandbox/api/checkpoint', {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            updateModelStatus(false, null);
+            // 同时清理会话
+            if (state.sessionId) {
+                await handleReset();
+            }
+        } else {
+            throw new Error(data.detail || 'Unload failed');
+        }
+    } catch (error) {
+        console.error('Unload model failed:', error);
+        elements.modelStatus.textContent = '卸载失败';
+        elements.modelStatus.className = 'status-badge error';
+    } finally {
+        elements.btnUnloadModel.disabled = false;
     }
 }
 

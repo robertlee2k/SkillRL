@@ -110,6 +110,20 @@ async def update_checkpoint(request: CheckpointUpdateRequest):
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
 
 
+@router.delete("/api/checkpoint")
+async def unload_checkpoint():
+    """卸载模型，释放 GPU 显存"""
+    try:
+        model_manager.unload_model()
+        return {
+            "success": True,
+            "message": "Model unloaded, GPU memory released"
+        }
+    except Exception as e:
+        logger.error(f"Failed to unload model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to unload model: {str(e)}")
+
+
 @router.post("/api/init")
 async def init_sandbox(request: InitRequest):
     """

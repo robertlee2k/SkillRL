@@ -84,6 +84,31 @@ class ModelManager:
         """检查模型是否已加载"""
         return self.model is not None and self.tokenizer is not None
 
+    def unload_model(self):
+        """
+        卸载模型，释放 GPU 显存。
+        """
+        if self.model is None:
+            logger.info("No model to unload")
+            return
+
+        logger.info(f"Unloading model from {self.checkpoint_path}")
+
+        # 删除模型和tokenizer引用
+        del self.model
+        del self.tokenizer
+        self.model = None
+        self.tokenizer = None
+        self.checkpoint_path = None
+
+        # 清理 GPU 缓存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info("GPU cache cleared")
+
+        logger.info("Model unloaded successfully")
+
 
 # 全局单例
 model_manager = ModelManager()
