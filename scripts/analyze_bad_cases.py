@@ -1,34 +1,30 @@
 #!/usr/bin/env python
 """
-Bad Case Dynamic Analysis for Customer Service Agent (Production Version).
+Bad Case Dynamic Analysis for Customer Service Agent (Multi-GPU Parallel Version).
 
 This script performs full-scale model rollouts in the CustomerServiceEnv
 to identify all failure patterns across the entire training dataset.
 
 Features:
+  - Multi-GPU parallel inference (8x speedup with 8 GPUs)
+  - Memory-limited model loading (respects existing training jobs)
   - Supports full dataset evaluation (4000+ playbooks)
-  - No hard limits on dialogue length - captures errors in deep conversations
   - Progress tracking with ETA estimation
   - Multi-dimensional statistics (by scenario, by dialogue length)
-  - Detailed reasoning trace capture for debugging
 
 Usage:
-    # Full dataset evaluation (default)
-    python scripts/analyze_bad_cases.py \
-        --playbook_path outputs/playbooks_all.json \
-        --checkpoint_path outputs/hf_checkpoints/epoch_40
-
-    # Sample evaluation (for quick testing)
+    # Full dataset evaluation with 8 GPUs (default)
     python scripts/analyze_bad_cases.py \
         --playbook_path outputs/playbooks_all.json \
         --checkpoint_path outputs/hf_checkpoints/epoch_40 \
-        --num_samples 100
+        --num_gpus 8 \
+        --max_memory_per_gpu 20
 
-    # Short dialogues only (legacy mode)
+    # Single GPU mode (for testing)
     python scripts/analyze_bad_cases.py \
         --playbook_path outputs/playbooks_all.json \
         --checkpoint_path outputs/hf_checkpoints/epoch_40 \
-        --max_rl_steps 5
+        --num_gpus 1
 """
 
 import os
@@ -37,10 +33,13 @@ import json
 import random
 import time
 import logging
+import multiprocessing as mp
+from multiprocessing import Pool, Queue, Manager
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import Counter, defaultdict
 from datetime import datetime
+import traceback
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -62,23 +61,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Constants
 # =============================================================================
-
-# System prompt (must match training)
-SYSTEM_PROMPT = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
-你的目标是高效解决买家问题，促成交易或妥善处理售后，同时避免激怒买家。
-
-你需要在每一步选择正确的服务动作。你的输出格式必须是：
-
-<tool_call>
-[你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
-<action>skill_id</action>
-
-可用的动作 ID 包括：
-- 通用: gen_greet, gen_empathize, gen_clarify, gen_verify_order, gen_hold, gen_transfer, gen_apologize, gen_close
-- 售前: pre_query_product, pre_check_stock, pre_compare, pre_recommend, pre_answer_spec, pre_check_promo, pre_guide_purchase
-- 物流: log_query_status, log_query_detail, log_estimate_arrival, log_modify_address, log_contact_courier, log_delay_notify, log_lost_claim
-- 售后: aft_check_policy, aft_collect_evidence, aft_initiate_refund, aft_initiate_return, aft_initiate_exchange, aft_schedule_pickup, aft_track_progress, aft_compensate, aft_reject_explain
-"""
 
 # Dialogue length buckets for statistics
 DIALOGUE_LENGTH_BUCKETS = [
@@ -109,17 +91,36 @@ class RolloutTrace:
     final_patience: int = 0
 
 
-@dataclass
-class BadCaseReport:
-    """Aggregated bad case analysis report."""
-    timestamp: str
-    total_episodes: int = 0
-    total_failures: int = 0
-    success_rate: float = 0.0
-    bad_cases: List[RolloutTrace] = field(default_factory=list)
-    top_error_actions: List[Tuple[str, int]] = field(default_factory=list)
-    scenario_breakdown: Dict[str, Dict[str, int]] = field(default_factory=dict)
-    length_breakdown: Dict[str, Dict[str, int]] = field(default_factory=dict)
+def trace_to_dict(trace: RolloutTrace) -> Dict:
+    """Convert RolloutTrace to serializable dict."""
+    return {
+        'playbook_id': trace.playbook_id,
+        'scenario': trace.scenario,
+        'rl_steps': trace.rl_steps,
+        'total_steps': trace.total_steps,
+        'won': trace.won,
+        'final_patience': trace.final_patience,
+        'action_history': trace.action_history,
+        'error_actions': trace.error_actions,
+        'reasoning_traces': trace.reasoning_traces[:3],
+        'dialogue_history': trace.dialogue_history
+    }
+
+
+def dict_to_trace(d: Dict) -> RolloutTrace:
+    """Convert dict back to RolloutTrace."""
+    return RolloutTrace(
+        playbook_id=d['playbook_id'],
+        scenario=d['scenario'],
+        rl_steps=d['rl_steps'],
+        total_steps=d['total_steps'],
+        won=d['won'],
+        final_patience=d['final_patience'],
+        action_history=d['action_history'],
+        error_actions=d['error_actions'],
+        reasoning_traces=d.get('reasoning_traces', []),
+        dialogue_history=d['dialogue_history']
+    )
 
 
 # =============================================================================
@@ -127,23 +128,13 @@ class BadCaseReport:
 # =============================================================================
 
 def parse_model_output(output: str) -> Tuple[str, Optional[str]]:
-    """
-    Parse model output to extract action and reasoning.
-
-    Training uses: ◈...◈ for thinking and <action>...</action> for action.
-
-    Returns:
-        (action, reasoning) tuple. reasoning may be None.
-    """
-    # Extract action from <action>...</action>
+    """Parse model output to extract action and reasoning."""
     action_match = re.search(r'<action>(.*?)</action>', output, re.DOTALL)
     action = action_match.group(1).strip() if action_match else ""
 
-    # Extract reasoning from ◈...◈ block (training format)
     reasoning_match = re.search(r'◈(.*?)◈', output, re.DOTALL)
     reasoning = reasoning_match.group(1).strip() if reasoning_match else None
 
-    # Fallback: if no action tag, try to extract from text
     if not action:
         for line in output.split('\n'):
             line = line.strip()
@@ -155,161 +146,187 @@ def parse_model_output(output: str) -> Tuple[str, Optional[str]]:
 
 
 # =============================================================================
-# Prompt Building
+# GPU Worker Process
 # =============================================================================
 
-def build_prompt_from_observation(
-    observation: Dict[str, Any],
-    dialogue_history: List[Dict[str, str]],
-    action_history: Optional[List[str]] = None,
-    history_length: int = 5
-) -> str:
-    """
-    Build the prompt for model inference from environment observation.
+class GPUWorker:
+    """Worker that processes rollouts on a specific GPU."""
 
-    Uses CustomerServicePromptBuilder from rl_interfaces.py to ensure
-    exact match with training-time prompts.
-    """
-    return CustomerServicePromptBuilder.build(
-        observation=observation,
-        action_history=action_history,
-        history_length=history_length
-    )
+    def __init__(
+        self,
+        gpu_id: int,
+        checkpoint_path: str,
+        playbook_path: str,
+        max_memory_gb: int = 20,
+        temperature: float = 0.4,
+        max_steps: int = 30
+    ):
+        self.gpu_id = gpu_id
+        self.checkpoint_path = checkpoint_path
+        self.playbook_path = playbook_path
+        self.max_memory_gb = max_memory_gb
+        self.temperature = temperature
+        self.max_steps = max_steps
+
+        # Will be initialized in setup
+        self.model = None
+        self.tokenizer = None
+        self.env = None
+
+    def setup(self):
+        """Initialize model and environment on the assigned GPU."""
+        # Set CUDA device
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(self.gpu_id)
+
+        # Import here to avoid CUDA init issues
+        from etl.customer_service_env import CustomerServiceEnv
+
+        # Load model with memory limit
+        max_memory = {0: f"{self.max_memory_gb}GiB"}
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.checkpoint_path,
+            trust_remote_code=True
+        )
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.checkpoint_path,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            max_memory=max_memory,
+            trust_remote_code=True
+        )
+        self.model.eval()
+
+        # Load environment
+        self.env = CustomerServiceEnv(self.playbook_path)
+
+        print(f"[GPU {self.gpu_id}] Setup complete, model loaded with {self.max_memory_gb}GB limit")
+
+    def process_batch(self, playbook_ids: List[str]) -> List[Dict]:
+        """Process a batch of playbooks and return results."""
+        results = []
+
+        for playbook_id in playbook_ids:
+            try:
+                trace = self._run_rollout(playbook_id)
+                results.append({
+                    'success': True,
+                    'trace': trace_to_dict(trace)
+                })
+            except Exception as e:
+                results.append({
+                    'success': False,
+                    'playbook_id': playbook_id,
+                    'error': str(e)
+                })
+
+        return results
+
+    def _run_rollout(self, playbook_id: str) -> RolloutTrace:
+        """Execute a single episode rollout."""
+        observation, info = self.env.reset(playbook_id=playbook_id)
+
+        trace = RolloutTrace(
+            playbook_id=playbook_id,
+            scenario=info['scenario'],
+            rl_steps=self.env.current_playbook.get('rl_steps', 0),
+            won=False,
+            total_steps=0
+        )
+
+        while not self.env.state.done and trace.total_steps < self.max_steps:
+            prompt = CustomerServicePromptBuilder.build(
+                observation=observation,
+                action_history=self.env.state.action_history if self.env.state.action_history else None,
+                history_length=5
+            )
+
+            # Generate response
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    temperature=self.temperature,
+                    top_p=0.9,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
+
+            new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+            model_output = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+            # Parse action
+            action, reasoning = parse_model_output(model_output)
+
+            if reasoning:
+                trace.reasoning_traces.append(reasoning)
+
+            # Step environment
+            prev_patience = self.env.state.patience
+            obs, reward, done, step_info = self.env.step(action)
+
+            trace.action_history.append(action)
+            trace.total_steps += 1
+
+            if step_info.get('fell_back', False):
+                trace.error_actions.append({
+                    'step': trace.total_steps,
+                    'action': action,
+                    'reasoning': reasoning,
+                    'patience_before': prev_patience,
+                    'patience_after': step_info.get('patience', 0),
+                    'system_message': self.env.state.dialogue_history[-1].get('content', '') if self.env.state.dialogue_history else ''
+                })
+
+            observation = obs
+
+        trace.won = self.env.state.won
+        trace.dialogue_history = self.env.state.dialogue_history.copy()
+        trace.final_patience = self.env.state.patience
+
+        return trace
 
 
-# =============================================================================
-# Model Loading
-# =============================================================================
-
-def load_model(checkpoint_path: str):
-    """Load model using Transformers."""
-    logger.info(f"Loading model from {checkpoint_path}")
-
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        checkpoint_path,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True
-    )
-    model.eval()
-
-    logger.info(f"Model loaded on {model.device}")
-    return model, tokenizer
-
-
-# =============================================================================
-# Response Generation
-# =============================================================================
-
-def generate_response(
-    model,
-    tokenizer,
-    prompt: str,
-    temperature: float = 0.4,
-    max_new_tokens: int = 512
-) -> str:
-    """Generate response using the model."""
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
+def worker_process(
+    gpu_id: int,
+    task_queue,
+    result_queue,
+    checkpoint_path: str,
+    playbook_path: str,
+    max_memory_gb: int,
+    temperature: float,
+    max_steps: int
+):
+    """Worker process entry point."""
+    try:
+        worker = GPUWorker(
+            gpu_id=gpu_id,
+            checkpoint_path=checkpoint_path,
+            playbook_path=playbook_path,
+            max_memory_gb=max_memory_gb,
             temperature=temperature,
-            top_p=0.9,
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            max_steps=max_steps
         )
+        worker.setup()
 
-    # Decode only the new tokens
-    new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
-    response = tokenizer.decode(new_tokens, skip_special_tokens=True)
+        while True:
+            task = task_queue.get()
 
-    return response
+            if task is None:  # Poison pill
+                result_queue.put(None)
+                break
 
+            batch_id, playbook_ids = task
+            results = worker.process_batch(playbook_ids)
+            result_queue.put((batch_id, results))
 
-# =============================================================================
-# Rollout Execution
-# =============================================================================
-
-def run_rollout(
-    env,
-    playbook_id: str,
-    model,
-    tokenizer,
-    temperature: float = 0.4,
-    max_tokens: int = 512,
-    max_steps: int = 30,
-    history_length: int = 5
-) -> RolloutTrace:
-    """
-    Execute a single episode rollout with the model.
-
-    Returns a RolloutTrace with full dialogue and reasoning history.
-    """
-    # Reset environment
-    observation, info = env.reset(playbook_id=playbook_id)
-
-    trace = RolloutTrace(
-        playbook_id=playbook_id,
-        scenario=info['scenario'],
-        rl_steps=env.current_playbook.get('rl_steps', 0),
-        won=False,
-        total_steps=0
-    )
-
-    while not env.state.done and trace.total_steps < max_steps:
-        # Build prompt using the same builder as training
-        prompt = build_prompt_from_observation(
-            observation=observation,
-            dialogue_history=env.state.dialogue_history,
-            action_history=env.state.action_history if env.state.action_history else None,
-            history_length=history_length
-        )
-
-        # Generate response
-        model_output = generate_response(
-            model, tokenizer, prompt,
-            temperature=temperature,
-            max_new_tokens=max_tokens
-        )
-
-        # Parse action and reasoning
-        action, reasoning = parse_model_output(model_output)
-
-        # Record reasoning
-        if reasoning:
-            trace.reasoning_traces.append(reasoning)
-
-        # Step environment
-        prev_patience = env.state.patience
-        obs, reward, done, step_info = env.step(action)
-
-        # Record action
-        trace.action_history.append(action)
-        trace.total_steps += 1
-
-        # Check if this was an error
-        if step_info.get('fell_back', False):
-            trace.error_actions.append({
-                'step': trace.total_steps,
-                'action': action,
-                'reasoning': reasoning,
-                'patience_before': prev_patience,
-                'patience_after': step_info.get('patience', 0),
-                'system_message': env.state.dialogue_history[-1].get('content', '') if env.state.dialogue_history else ''
-            })
-
-        observation = obs
-
-    # Episode finished
-    trace.won = env.state.won
-    trace.dialogue_history = env.state.dialogue_history.copy()
-    trace.final_patience = env.state.patience
-
-    return trace
+    except Exception as e:
+        print(f"[GPU {gpu_id}] Worker crashed: {e}\n{traceback.format_exc()}")
+        result_queue.put(None)
 
 
 # =============================================================================
@@ -333,25 +350,21 @@ def init_length_breakdown() -> Dict[str, Dict[str, int]]:
 
 
 # =============================================================================
-# Progress Reporting
+# Progress Reporter
 # =============================================================================
 
 class ProgressReporter:
     """Progress reporter with ETA estimation."""
 
-    def __init__(self, total: int, report_interval: int = 50):
+    def __init__(self, total: int, report_interval: int = 100):
         self.total = total
         self.report_interval = report_interval
         self.start_time = time.time()
         self.processed = 0
-        self.last_report_time = self.start_time
 
-    def update(self, count: int = 1):
-        """Update progress counter."""
+    def update(self, count: int = 1) -> bool:
+        """Update progress and return True if should report."""
         self.processed += count
-
-    def should_report(self) -> bool:
-        """Check if we should report progress."""
         return self.processed % self.report_interval == 0 or self.processed == self.total
 
     def get_progress_line(self) -> str:
@@ -395,10 +408,13 @@ def analyze_bad_cases(
     max_rl_steps: int = 999,
     seed: int = 42,
     temperature: float = 0.4,
-    report_interval: int = 50
-) -> BadCaseReport:
+    num_gpus: int = 8,
+    max_memory_per_gpu: int = 20,
+    batch_size: int = 16,
+    report_interval: int = 100
+) -> Dict:
     """
-    Main analysis function for full-scale evaluation.
+    Main analysis function with multi-GPU parallel inference.
 
     Args:
         playbook_path: Path to playbooks JSON file
@@ -407,19 +423,22 @@ def analyze_bad_cases(
         output_path: Output path for trace JSON
         max_rl_steps: Maximum RL steps filter (999 = no filter)
         seed: Random seed for sampling
-        temperature: Sampling temperature (should match training)
+        temperature: Sampling temperature
+        num_gpus: Number of GPUs to use
+        max_memory_per_gpu: Max memory per GPU in GB
+        batch_size: Number of playbooks per batch
         report_interval: Progress report interval
 
     Returns:
-        BadCaseReport with analysis results
+        Dictionary with analysis results
     """
-    from etl.customer_service_env import CustomerServiceEnv
-
     logger.info("=" * 70)
-    logger.info("Customer Service Agent - Bad Case Analysis (Production Mode)")
+    logger.info("Customer Service Agent - Bad Case Analysis (Multi-GPU Parallel)")
     logger.info("=" * 70)
     logger.info(f"Playbook: {playbook_path}")
     logger.info(f"Checkpoint: {checkpoint_path}")
+    logger.info(f"Num GPUs: {num_gpus}")
+    logger.info(f"Max memory per GPU: {max_memory_per_gpu}GB")
     logger.info(f"Max RL steps filter: {max_rl_steps if max_rl_steps < 999 else 'No limit'}")
     logger.info(f"Num samples: {num_samples if num_samples > 0 else 'All'}")
     logger.info(f"Output: {output_path}")
@@ -430,7 +449,7 @@ def analyze_bad_cases(
         all_playbooks = json.load(f)
     logger.info(f"Loaded {len(all_playbooks)} total playbooks")
 
-    # Filter playbooks (only filter out 'unknown' scenario, allow all dialogue lengths)
+    # Filter playbooks
     filtered_playbooks = [
         p for p in all_playbooks
         if p.get('rl_steps', 0) <= max_rl_steps
@@ -446,104 +465,147 @@ def analyze_bad_cases(
         sample_playbooks = filtered_playbooks
 
     total_to_process = len(sample_playbooks)
-    logger.info(f"Will process {total_to_process} playbooks")
+    logger.info(f"Will process {total_to_process} playbooks with {num_gpus} GPUs")
 
-    # Initialize environment and model
-    env = CustomerServiceEnv(playbook_path)
-    model, tokenizer = load_model(checkpoint_path)
+    # Split playbooks into batches
+    playbook_ids = [p['playbook_id'] for p in sample_playbooks]
 
-    # Initialize report
-    report = BadCaseReport(timestamp=datetime.now().isoformat())
-    report.total_episodes = total_to_process
+    batches = []
+    for i in range(0, len(playbook_ids), batch_size):
+        batches.append(playbook_ids[i:i + batch_size])
 
-    # Statistics counters
+    logger.info(f"Created {len(batches)} batches (batch_size={batch_size})")
+
+    # Create queues for multiprocessing
+    mp_ctx = mp.get_context('spawn')
+    task_queue = mp_ctx.Queue()
+    result_queue = mp_ctx.Queue()
+
+    # Start worker processes
+    workers = []
+    for gpu_id in range(num_gpus):
+        p = mp_ctx.Process(
+            target=worker_process,
+            args=(
+                gpu_id,
+                task_queue,
+                result_queue,
+                checkpoint_path,
+                playbook_path,
+                max_memory_per_gpu,
+                temperature,
+                30  # max_steps
+            )
+        )
+        p.start()
+        workers.append(p)
+        logger.info(f"Started worker for GPU {gpu_id}")
+
+    # Give workers time to initialize
+    logger.info("Waiting for workers to initialize...")
+    time.sleep(10)
+
+    # Submit all tasks
+    for batch_id, batch in enumerate(batches):
+        task_queue.put((batch_id, batch))
+
+    # Add poison pills
+    for _ in range(num_gpus):
+        task_queue.put(None)
+
+    logger.info("All tasks submitted, waiting for results...")
+
+    # Collect results
+    progress = ProgressReporter(total_to_process, report_interval)
+
+    results_by_batch = {}
+    completed_workers = 0
+
+    while completed_workers < num_gpus:
+        result = result_queue.get()
+
+        if result is None:
+            completed_workers += 1
+            continue
+
+        batch_id, batch_results = result
+        results_by_batch[batch_id] = batch_results
+
+        # Count processed
+        processed = sum(len(r.get('trace', {}).get('action_history', []))
+                       for r in batch_results if r.get('success'))
+
+        if progress.update(len(batch_results)):
+            logger.info(progress.get_progress_line())
+
+    # Wait for all workers to finish
+    for p in workers:
+        p.join()
+
+    logger.info("All workers finished, aggregating results...")
+
+    # Aggregate results
+    all_traces = []
     action_error_counter = Counter()
     scenario_stats = defaultdict(lambda: {'total': 0, 'won': 0, 'failed': 0, 'errors': 0})
     length_stats = init_length_breakdown()
 
-    # Progress reporter
-    progress = ProgressReporter(total_to_process, report_interval)
+    for batch_id in sorted(results_by_batch.keys()):
+        for result in results_by_batch[batch_id]:
+            if result.get('success'):
+                trace_dict = result['trace']
+                trace = dict_to_trace(trace_dict)
+                all_traces.append(trace)
 
-    # Run rollouts
-    start_time = time.time()
+                # Update statistics
+                scenario = trace.scenario
+                scenario_stats[scenario]['total'] += 1
+                if trace.won:
+                    scenario_stats[scenario]['won'] += 1
+                else:
+                    scenario_stats[scenario]['failed'] += 1
+                    for err in trace.error_actions:
+                        action_error_counter[err['action']] += 1
+                        scenario_stats[scenario]['errors'] += 1
 
-    for i, playbook in enumerate(sample_playbooks):
-        playbook_id = playbook['playbook_id']
+                # Length stats
+                length_bucket = get_length_bucket(trace.rl_steps)
+                length_stats[length_bucket]['total'] += 1
+                if trace.won:
+                    length_stats[length_bucket]['won'] += 1
+                else:
+                    length_stats[length_bucket]['failed'] += 1
+                    length_stats[length_bucket]['errors'] += len(trace.error_actions)
 
-        try:
-            trace = run_rollout(
-                env=env,
-                playbook_id=playbook_id,
-                model=model,
-                tokenizer=tokenizer,
-                temperature=temperature,
-                max_steps=30
-            )
-
-            # Update scenario statistics
-            scenario = trace.scenario
-            scenario_stats[scenario]['total'] += 1
-            if trace.won:
-                scenario_stats[scenario]['won'] += 1
-            else:
-                scenario_stats[scenario]['failed'] += 1
-                report.total_failures += 1
-
-                # Collect error actions
-                for err in trace.error_actions:
-                    action_error_counter[err['action']] += 1
-                    scenario_stats[scenario]['errors'] += 1
-
-                # Add to bad cases
-                report.bad_cases.append(trace)
-
-            # Update length statistics
-            length_bucket = get_length_bucket(trace.rl_steps)
-            length_stats[length_bucket]['total'] += 1
-            if trace.won:
-                length_stats[length_bucket]['won'] += 1
-            else:
-                length_stats[length_bucket]['failed'] += 1
-                length_stats[length_bucket]['errors'] += len(trace.error_actions)
-
-        except Exception as e:
-            logger.error(f"Error processing {playbook_id}: {e}")
-            continue
-
-        # Update progress
-        progress.update()
-
-        if progress.should_report():
-            logger.info(progress.get_progress_line())
+    # Filter bad cases (failures only)
+    bad_cases = [t for t in all_traces if not t.won]
 
     # Calculate success rate
-    total_time = time.time() - start_time
-    if report.total_episodes > 0:
-        report.success_rate = (report.total_episodes - report.total_failures) / report.total_episodes * 100
+    total_processed = len(all_traces)
+    total_failures = len(bad_cases)
+    success_rate = (total_processed - total_failures) / total_processed * 100 if total_processed > 0 else 0
 
-    # Top error actions
-    report.top_error_actions = action_error_counter.most_common(10)
-    report.scenario_breakdown = dict(scenario_stats)
-    report.length_breakdown = length_stats
+    logger.info(f"Processed {total_processed} episodes, {total_failures} failures ({success_rate:.1f}% success)")
 
-    # Prepare output data
+    # Prepare output
     trace_data = {
-        'timestamp': report.timestamp,
+        'timestamp': datetime.now().isoformat(),
         'config': {
             'playbook_path': playbook_path,
             'checkpoint_path': checkpoint_path,
             'num_samples': num_samples,
             'max_rl_steps': max_rl_steps,
             'temperature': temperature,
+            'num_gpus': num_gpus,
+            'max_memory_per_gpu': max_memory_per_gpu,
+            'batch_size': batch_size,
             'seed': seed
         },
         'summary': {
-            'total_episodes': report.total_episodes,
-            'total_failures': report.total_failures,
-            'success_rate': f"{report.success_rate:.2f}%",
-            'total_time_seconds': round(total_time, 2),
-            'avg_time_per_episode': round(total_time / report.total_episodes, 3) if report.total_episodes > 0 else 0,
-            'top_error_actions': report.top_error_actions,
+            'total_episodes': total_processed,
+            'total_failures': total_failures,
+            'success_rate': f"{success_rate:.2f}%",
+            'top_error_actions': action_error_counter.most_common(10),
         },
         'scenario_breakdown': {
             scenario: {
@@ -565,46 +627,35 @@ def analyze_bad_cases(
             }
             for bucket, stats in length_stats.items()
         },
-        'bad_cases': [
-            {
-                'playbook_id': bc.playbook_id,
-                'scenario': bc.scenario,
-                'rl_steps': bc.rl_steps,
-                'total_steps': bc.total_steps,
-                'won': bc.won,
-                'final_patience': bc.final_patience,
-                'action_history': bc.action_history,
-                'error_actions': bc.error_actions,
-                'reasoning_traces': bc.reasoning_traces[:3],  # First 3 reasoning traces
-                'dialogue_history': bc.dialogue_history
-            }
-            for bc in report.bad_cases
-        ]
+        'bad_cases': [trace_to_dict(bc) for bc in bad_cases]
     }
 
-    # Save trace
+    # Save
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(trace_data, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"Trace saved to {output_path}")
+    logger.info(f"Results saved to {output_path}")
 
     # Print summary
-    print_summary(report, total_time)
+    print_summary(trace_data)
 
-    return report
+    return trace_data
 
 
-def print_summary(report: BadCaseReport, total_time: float):
+def print_summary(data: Dict):
     """Print detailed analysis summary."""
+    summary = data['summary']
+    scenario_breakdown = data['scenario_breakdown']
+    length_breakdown = data['length_breakdown']
+
     logger.info("")
     logger.info("=" * 70)
     logger.info("ANALYSIS SUMMARY")
     logger.info("=" * 70)
-    logger.info(f"Total episodes analyzed: {report.total_episodes}")
-    logger.info(f"Total failures: {report.total_failures}")
-    logger.info(f"Overall success rate: {report.success_rate:.2f}%")
-    logger.info(f"Total time: {total_time:.1f}s ({total_time/60:.1f}m)")
+    logger.info(f"Total episodes analyzed: {summary['total_episodes']}")
+    logger.info(f"Total failures: {summary['total_failures']}")
+    logger.info(f"Overall success rate: {summary['success_rate']}")
     logger.info("")
 
     # Scenario breakdown
@@ -613,28 +664,26 @@ def print_summary(report: BadCaseReport, total_time: float):
     logger.info("-" * 70)
     logger.info(f"{'Scenario':<15} {'Total':>8} {'Won':>8} {'Failed':>8} {'Success%':>10} {'Errors':>8}")
     logger.info("-" * 70)
-    for scenario, stats in sorted(report.scenario_breakdown.items()):
-        success_pct = stats['won'] / stats['total'] * 100 if stats['total'] > 0 else 0
-        logger.info(f"{scenario:<15} {stats['total']:>8} {stats['won']:>8} {stats['failed']:>8} {success_pct:>9.1f}% {stats['errors']:>8}")
+    for scenario, stats in sorted(scenario_breakdown.items()):
+        logger.info(f"{scenario:<15} {stats['total']:>8} {stats['won']:>8} {stats['failed']:>8} {stats['success_rate']:>10} {stats['total_errors']:>8}")
     logger.info("")
 
     # Length breakdown
     logger.info("-" * 70)
-    logger.info("DIALOGUE LENGTH BREAKDOWN (by rl_steps)")
+    logger.info("DIALOGUE LENGTH BREAKDOWN")
     logger.info("-" * 70)
     logger.info(f"{'Length':<15} {'Total':>8} {'Won':>8} {'Failed':>8} {'Success%':>10} {'Errors':>8}")
     logger.info("-" * 70)
-    for bucket, stats in report.length_breakdown.items():
+    for bucket, stats in length_breakdown.items():
         if stats['total'] > 0:
-            success_pct = stats['won'] / stats['total'] * 100
-            logger.info(f"{bucket:<15} {stats['total']:>8} {stats['won']:>8} {stats['failed']:>8} {success_pct:>9.1f}% {stats['errors']:>8}")
+            logger.info(f"{bucket:<15} {stats['total']:>8} {stats['won']:>8} {stats['failed']:>8} {stats['success_rate']:>10} {stats['total_errors']:>8}")
     logger.info("")
 
-    # Top error actions
+    # Top errors
     logger.info("-" * 70)
     logger.info("TOP 10 ERROR ACTIONS")
     logger.info("-" * 70)
-    for action, count in report.top_error_actions:
+    for action, count in summary['top_error_actions']:
         logger.info(f"  {action}: {count} errors")
     logger.info("")
 
@@ -649,18 +698,25 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Analyze bad cases in Customer Service Agent (Production Mode)',
+        description='Analyze bad cases with Multi-GPU Parallel Inference',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Full dataset evaluation
-  python scripts/analyze_bad_cases.py --checkpoint_path outputs/hf_checkpoints/epoch_40
+  # Full dataset evaluation with 8 GPUs (default)
+  python scripts/analyze_bad_cases.py \\
+      --checkpoint_path outputs/hf_checkpoints/epoch_40 \\
+      --num_gpus 8 \\
+      --max_memory_per_gpu 20
+
+  # Single GPU mode
+  python scripts/analyze_bad_cases.py \\
+      --checkpoint_path outputs/hf_checkpoints/epoch_40 \\
+      --num_gpus 1
 
   # Sample 100 playbooks for quick testing
-  python scripts/analyze_bad_cases.py --num_samples 100 --checkpoint_path outputs/hf_checkpoints/epoch_40
-
-  # Short dialogues only (legacy mode)
-  python scripts/analyze_bad_cases.py --max_rl_steps 5 --checkpoint_path outputs/hf_checkpoints/epoch_40
+  python scripts/analyze_bad_cases.py \\
+      --checkpoint_path outputs/hf_checkpoints/epoch_40 \\
+      --num_samples 100
         """
     )
     parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all.json',
@@ -668,16 +724,22 @@ Examples:
     parser.add_argument('--checkpoint_path', type=str, default='outputs/hf_checkpoints/epoch_40',
                         help='Path to HF checkpoint directory')
     parser.add_argument('--num_samples', type=int, default=0,
-                        help='Number of samples to analyze (0 = all playbooks)')
+                        help='Number of samples to analyze (0 = all)')
     parser.add_argument('--max_rl_steps', type=int, default=999,
-                        help='Maximum RL steps filter (999 = no filter, use 5 for short-only mode)')
+                        help='Maximum RL steps filter (999 = no filter)')
     parser.add_argument('--output_path', type=str, default='outputs/all_bad_cases_trace.json',
                         help='Output path for trace JSON')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     parser.add_argument('--temperature', type=float, default=0.4,
-                        help='Sampling temperature (should match training)')
-    parser.add_argument('--report_interval', type=int, default=50,
+                        help='Sampling temperature')
+    parser.add_argument('--num_gpus', type=int, default=8,
+                        help='Number of GPUs to use for parallel inference')
+    parser.add_argument('--max_memory_per_gpu', type=int, default=20,
+                        help='Maximum memory per GPU in GB (to not interfere with training)')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='Number of playbooks per batch per GPU')
+    parser.add_argument('--report_interval', type=int, default=100,
                         help='Progress report interval')
 
     args = parser.parse_args()
@@ -690,9 +752,14 @@ Examples:
         max_rl_steps=args.max_rl_steps,
         seed=args.seed,
         temperature=args.temperature,
+        num_gpus=args.num_gpus,
+        max_memory_per_gpu=args.max_memory_per_gpu,
+        batch_size=args.batch_size,
         report_interval=args.report_interval
     )
 
 
 if __name__ == '__main__':
+    # Required for multiprocessing with CUDA
+    mp.set_start_method('spawn', force=True)
     main()
