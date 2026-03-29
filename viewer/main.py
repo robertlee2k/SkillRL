@@ -20,6 +20,7 @@ async def startup():
 
 
 # 注册路由（放在 startup 之后避免循环导入）
-from .routes import playbooks, monitor
+from .routes import playbooks, monitor, sandbox
 app.include_router(playbooks.router)
 app.include_router(monitor.router)
+app.include_router(sandbox.router)

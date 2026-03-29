@@ -1,0 +1,974 @@
+{% extends "base.html" %}
+
+{% block title %}RL Agent Sandbox - Playbook Viewer{% endblock %}
+
+{% block content %}
+<div class="sandbox-container">
+    <!-- 控制栏 -->
+    <div class="control-panel">
+        <div class="control-row">
+            <label for="checkpoint-path">模型路径:</label>
+            <input type="text" id="checkpoint-path" value="{{ default_checkpoint_path }}" placeholder="Checkpoint path">
+            <button id="btn-load-model" class="btn-secondary">加载模型</button>
+            <span id="model-status" class="status-badge">未加载</span>
+        </div>
+        <div class="control-row">
+            <label for="playbook-select">选择剧本:</label>
+            <select id="playbook-select">
+                <option value="">-- 选择剧本 --</option>
+            </select>
+            <button id="btn-init" class="btn-primary" disabled>初始化</button>
+            <button id="btn-step" class="btn-primary" disabled>单步</button>
+            <button id="btn-autorun" class="btn-primary" disabled>自动跑完</button>
+            <button id="btn-reset" class="btn-secondary" disabled>重置</button>
+        </div>
+        <div class="control-row" id="session-info" style="display: none;">
+            <span>Session: <code id="session-id">-</code></span>
+            <span>Step: <strong id="step-count">0</strong></span>
+            <span>Reward: <strong id="total-reward">0</strong></span>
+            <span>Patience: <strong id="patience">2</strong></span>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 左侧: 对话展示区 -->
+        <div class="dialogue-panel">
+            <h3>对话展示</h3>
+            <div id="dialogue-container" class="dialogue-scroll">
+                <div class="dialogue-empty">请先选择剧本并点击"初始化"</div>
+            </div>
+        </div>
+
+        <!-- 右侧: X-Ray 探针区 -->
+        <div class="xray-panel">
+            <h3>X-Ray 探针</h3>
+
+            <!-- Thought & Action -->
+            <div class="xray-section">
+                <h4>思维过程</h4>
+                <div id="xray-thought" class="xray-content thought-box">
+                    <span class="placeholder">等待推演...</span>
+                </div>
+            </div>
+
+            <div class="xray-section">
+                <h4>执行动作</h4>
+                <div id="xray-action" class="xray-content action-box">
+                    <span class="placeholder">-</span>
+                </div>
+            </div>
+
+            <!-- Env State -->
+            <div class="xray-section">
+                <h4>环境状态</h4>
+                <div class="state-grid">
+                    <div class="state-item">
+                        <span class="state-label">当前节点</span>
+                        <span id="xray-node" class="state-value">-</span>
+                    </div>
+                    <div class="state-item">
+                        <span class="state-label">剩余耐心</span>
+                        <span id="xray-patience" class="state-value">-</span>
+                    </div>
+                    <div class="state-item">
+                        <span class="state-label">累积奖励</span>
+                        <span id="xray-reward" class="state-value">-</span>
+                    </div>
+                    <div class="state-item">
+                        <span class="state-label">情绪状态</span>
+                        <span id="xray-sentiment" class="state-value">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Available Skills -->
+            <div class="xray-section">
+                <h4>可用技能</h4>
+                <div id="xray-skills" class="skills-list">
+                    <span class="placeholder">-</span>
+                </div>
+            </div>
+
+            <!-- System Logs -->
+            <div class="xray-section">
+                <h4>系统判定</h4>
+                <div id="xray-system" class="system-logs">
+                    <span class="placeholder">暂无系统消息</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 原始输出 (折叠) -->
+    <details class="raw-output">
+        <summary>原始模型输出 (Debug)</summary>
+        <pre id="raw-output-content">-</pre>
+    </details>
+</div>
+
+<style>
+.sandbox-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* 控制面板 */
+.control-panel {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 1.25rem 1.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+}
+
+.control-row:last-child {
+    margin-bottom: 0;
+}
+
+.control-row label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    min-width: 70px;
+}
+
+.control-row input[type="text"] {
+    flex: 1;
+    min-width: 300px;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+}
+
+.control-row select {
+    min-width: 250px;
+    padding: 0.625rem 2rem 0.625rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.status-badge {
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.status-badge.loaded {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-emerald);
+}
+
+.status-badge.loading {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-primary);
+}
+
+.status-badge.error {
+    background: rgba(244, 63, 94, 0.15);
+    color: var(--accent-rose);
+}
+
+#session-info {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-subtle);
+    gap: 1.5rem;
+}
+
+#session-info span {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+#session-info code {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent-sky);
+}
+
+/* 按钮样式 */
+.btn-primary {
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--accent-primary);
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary-dim) 100%);
+    color: var(--bg-deep);
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    border-color: var(--text-muted);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 主内容区 */
+.main-content {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    gap: 1.5rem;
+    min-height: 600px;
+}
+
+@media (max-width: 1100px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 对话面板 */
+.dialogue-panel {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.dialogue-panel h3 {
+    margin: 0;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-secondary) 100%);
+}
+
+.dialogue-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.dialogue-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    text-align: center;
+    padding: 3rem;
+}
+
+/* 消息气泡 */
+.msg-bubble {
+    max-width: 85%;
+    padding: 0.875rem 1.125rem;
+    border-radius: var(--radius-md);
+    animation: bubbleIn 0.3s ease;
+}
+
+@keyframes bubbleIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.msg-bubble.buyer {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0.05) 100%);
+    border: 1px solid rgba(14, 165, 233, 0.2);
+    border-left: 3px solid var(--accent-sky);
+    align-self: flex-start;
+}
+
+.msg-bubble.agent {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.12) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-left: 3px solid var(--accent-violet);
+    align-self: flex-end;
+}
+
+.msg-bubble.system {
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.2);
+    border-left: 3px solid var(--accent-rose);
+    align-self: center;
+    max-width: 95%;
+    font-size: 0.85rem;
+}
+
+.msg-bubble.system.warning {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.2);
+    border-left-color: var(--accent-primary);
+}
+
+.msg-role {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.375rem;
+}
+
+.msg-bubble.buyer .msg-role { color: var(--accent-sky); }
+.msg-bubble.agent .msg-role { color: var(--accent-violet); }
+.msg-bubble.system .msg-role { color: var(--accent-rose); }
+.msg-bubble.system.warning .msg-role { color: var(--accent-primary); }
+
+.msg-content {
+    color: var(--text-primary);
+    line-height: 1.5;
+    font-size: 0.9rem;
+}
+
+.msg-action {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--accent-violet);
+    margin-top: 0.375rem;
+    padding-top: 0.375rem;
+    border-top: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+/* X-Ray 面板 */
+.xray-panel {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow-y: auto;
+}
+
+.xray-panel h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.xray-section h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.xray-content {
+    padding: 0.875rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-subtle);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    min-height: 60px;
+}
+
+.xray-content .placeholder {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.thought-box {
+    font-family: 'JetBrains Mono', monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--accent-sky);
+}
+
+.action-box {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent-violet);
+    font-weight: 500;
+}
+
+/* 状态网格 */
+.state-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+
+.state-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 0.625rem 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.state-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.state-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* 技能列表 */
+.skills-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+}
+
+.skill-tag {
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+.skill-tag.valid {
+    border-color: rgba(16, 185, 129, 0.3);
+    color: var(--accent-emerald);
+}
+
+/* 系统日志 */
+.system-logs {
+    max-height: 150px;
+    overflow-y: auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 0.625rem;
+    font-size: 0.8rem;
+}
+
+.system-logs .placeholder {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.log-entry {
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.25rem;
+    background: var(--bg-secondary);
+}
+
+.log-entry.error {
+    background: rgba(244, 63, 94, 0.1);
+    color: var(--accent-rose);
+}
+
+.log-entry.warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--accent-primary);
+}
+
+/* 原始输出 */
+.raw-output {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 1rem;
+}
+
+.raw-output summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.raw-output pre {
+    margin: 0.75rem 0 0 0;
+    padding: 1rem;
+    background: var(--bg-primary);
+    border-radius: var(--radius-md);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* 加载动画 */
+.loading {
+    position: relative;
+    pointer-events: none;
+}
+
+.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    margin: -8px 0 0 -8px;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+// ==================== 全局状态 ====================
+const state = {
+    sessionId: null,
+    modelLoaded: false,
+    isRunning: false,
+    playbooks: []
+};
+
+// ==================== DOM 元素 ====================
+const elements = {
+    checkpointPath: document.getElementById('checkpoint-path'),
+    btnLoadModel: document.getElementById('btn-load-model'),
+    modelStatus: document.getElementById('model-status'),
+    playbookSelect: document.getElementById('playbook-select'),
+    btnInit: document.getElementById('btn-init'),
+    btnStep: document.getElementById('btn-step'),
+    btnAutorun: document.getElementById('btn-autorun'),
+    btnReset: document.getElementById('btn-reset'),
+    sessionId: document.getElementById('session-id'),
+    stepCount: document.getElementById('step-count'),
+    totalReward: document.getElementById('total-reward'),
+    patience: document.getElementById('patience'),
+    sessionInfo: document.getElementById('session-info'),
+    dialogueContainer: document.getElementById('dialogue-container'),
+    xrayThought: document.getElementById('xray-thought'),
+    xrayAction: document.getElementById('xray-action'),
+    xrayNode: document.getElementById('xray-node'),
+    xrayPatience: document.getElementById('xray-patience'),
+    xrayReward: document.getElementById('xray-reward'),
+    xraySentiment: document.getElementById('xray-sentiment'),
+    xraySkills: document.getElementById('xray-skills'),
+    xraySystem: document.getElementById('xray-system'),
+    rawOutput: document.getElementById('raw-output-content')
+};
+
+// ==================== 初始化 ====================
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadPlaybooks();
+    await checkModelStatus();
+    bindEvents();
+});
+
+async function loadPlaybooks() {
+    try {
+        const response = await fetch('/sandbox/api/playbooks');
+        const data = await response.json();
+
+        data.playbooks.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.playbook_id;
+            option.textContent = `${p.playbook_id} (${p.scenario}, ${p.rl_steps || 0} steps)`;
+            elements.playbookSelect.appendChild(option);
+        });
+
+        state.playbooks = data.playbooks.map(p => p.playbook_id);
+        console.log(`Loaded ${data.playbooks.length} playbooks`);
+    } catch (error) {
+        console.error('Failed to load playbooks:', error);
+    }
+}
+
+async function checkModelStatus() {
+    try {
+        const response = await fetch('/sandbox/api/checkpoint');
+        const data = await response.json();
+        updateModelStatus(data.is_loaded, data.checkpoint_path);
+    } catch (error) {
+        console.error('Failed to check model status:', error);
+    }
+}
+
+function updateModelStatus(isLoaded, path) {
+    state.modelLoaded = isLoaded;
+    elements.modelStatus.textContent = isLoaded ? '已加载' : '未加载';
+    elements.modelStatus.className = 'status-badge ' + (isLoaded ? 'loaded' : '');
+    elements.btnInit.disabled = !isLoaded;
+}
+
+function bindEvents() {
+    elements.btnLoadModel.addEventListener('click', handleLoadModel);
+    elements.btnInit.addEventListener('click', handleInit);
+    elements.btnStep.addEventListener('click', handleStep);
+    elements.btnAutorun.addEventListener('click', handleAutorun);
+    elements.btnReset.addEventListener('click', handleReset);
+}
+
+// ==================== 事件处理 ====================
+async function handleLoadModel() {
+    const path = elements.checkpointPath.value.trim();
+    if (!path) return;
+
+    elements.btnLoadModel.disabled = true;
+    elements.modelStatus.textContent = '加载中...';
+    elements.modelStatus.className = 'status-badge loading';
+
+    try {
+        const response = await fetch('/sandbox/api/checkpoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checkpoint_path: path })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            updateModelStatus(true, data.checkpoint_path);
+        } else {
+            throw new Error(data.detail || 'Load failed');
+        }
+    } catch (error) {
+        console.error('Load model failed:', error);
+        elements.modelStatus.textContent = '加载失败';
+        elements.modelStatus.className = 'status-badge error';
+    } finally {
+        elements.btnLoadModel.disabled = false;
+    }
+}
+
+async function handleInit() {
+    const playbookId = elements.playbookSelect.value;
+    if (!playbookId) {
+        alert('请选择剧本');
+        return;
+    }
+
+    elements.btnInit.disabled = true;
+    elements.btnInit.textContent = '初始化中...';
+
+    // 清空之前的系统日志
+    elements.xraySystem.innerHTML = '<span class="placeholder">暂无系统消息</span>';
+    elements.rawOutput.textContent = '-';
+
+    try {
+        const response = await fetch('/sandbox/api/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playbook_id: playbookId })
+        });
+
+        const data = await response.json();
+        if (data.session_id) {
+            state.sessionId = data.session_id;
+            updateUI(data);
+            enableControls(true);
+        } else {
+            throw new Error(data.detail || 'Init failed');
+        }
+    } catch (error) {
+        console.error('Init failed:', error);
+        alert('初始化失败: ' + error.message);
+    } finally {
+        elements.btnInit.disabled = false;
+        elements.btnInit.textContent = '初始化';
+    }
+}
+
+async function handleStep() {
+    if (!state.sessionId || state.isRunning) return;
+
+    state.isRunning = true;
+    elements.btnStep.disabled = true;
+    elements.btnStep.textContent = '推理中...';
+
+    try {
+        const response = await fetch('/sandbox/api/step', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: state.sessionId })
+        });
+
+        const data = await response.json();
+        updateUI(data);
+
+        if (data.state?.done) {
+            disableOnDone(data.state.won);
+        }
+    } catch (error) {
+        console.error('Step failed:', error);
+        alert('推演失败: ' + error.message);
+    } finally {
+        state.isRunning = false;
+        elements.btnStep.disabled = false;
+        elements.btnStep.textContent = '单步';
+    }
+}
+
+async function handleAutorun() {
+    if (!state.sessionId || state.isRunning) return;
+
+    state.isRunning = true;
+    elements.btnAutorun.disabled = true;
+    elements.btnAutorun.textContent = '运行中...';
+
+    try {
+        const response = await fetch('/sandbox/api/autorun', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: state.sessionId,
+                max_steps: 20,
+                delay_ms: 300
+            })
+        });
+
+        const data = await response.json();
+        updateDialogue(data.dialogue || []);
+
+        if (data.steps && data.steps.length > 0) {
+            const lastStep = data.steps[data.steps.length - 1];
+            updateXray(lastStep.xray, lastStep.state);
+        }
+
+        if (data.final_state?.done) {
+            disableOnDone(data.final_state.won);
+        }
+    } catch (error) {
+        console.error('Autorun failed:', error);
+        alert('自动运行失败: ' + error.message);
+    } finally {
+        state.isRunning = false;
+        elements.btnAutorun.disabled = false;
+        elements.btnAutorun.textContent = '自动跑完';
+    }
+}
+
+async function handleReset() {
+    if (state.sessionId) {
+        await fetch(`/sandbox/api/session/${state.sessionId}`, { method: 'DELETE' });
+    }
+    state.sessionId = null;
+    resetUI();
+}
+
+// ==================== UI 更新 ====================
+function updateUI(data) {
+    // 更新会话信息
+    if (data.session_id) {
+        elements.sessionId.textContent = data.session_id;
+        elements.sessionInfo.style.display = 'flex';
+    }
+
+    // 更新状态
+    if (data.state) {
+        elements.stepCount.textContent = data.state.step_count || 0;
+        elements.totalReward.textContent = (data.state.total_reward || 0).toFixed(2);
+        elements.patience.textContent = data.state.patience ?? 2;
+    }
+
+    // 更新对话
+    if (data.dialogue) {
+        updateDialogue(data.dialogue);
+    }
+
+    // 更新 X-Ray
+    if (data.xray) {
+        updateXray(data.xray, data.state);
+    }
+
+    // 更新原始输出
+    if (data.raw_output) {
+        elements.rawOutput.textContent = data.raw_output;
+    }
+}
+
+function updateDialogue(dialogue) {
+    elements.dialogueContainer.innerHTML = '';
+
+    dialogue.forEach(msg => {
+        const bubble = document.createElement('div');
+        bubble.className = `msg-bubble ${msg.role}`;
+
+        if (msg.role === 'system') {
+            // 检查是否是警告消息
+            if (msg.content.includes('警告') || msg.content.includes('拖延')) {
+                bubble.classList.add('warning');
+            }
+        }
+
+        const roleLabel = {
+            'buyer': '买家',
+            'agent': '客服',
+            'system': '系统'
+        };
+
+        let content = msg.content;
+        if (msg.role === 'agent' && msg.action_nlg) {
+            content = msg.action_nlg;
+        }
+
+        bubble.innerHTML = `
+            <div class="msg-role">${roleLabel[msg.role] || msg.role}</div>
+            <div class="msg-content">${escapeHtml(content)}</div>
+            ${msg.action && msg.role === 'agent' ? `<div class="msg-action">Action: ${msg.action}</div>` : ''}
+        `;
+
+        elements.dialogueContainer.appendChild(bubble);
+    });
+
+    // 滚动到底部
+    elements.dialogueContainer.scrollTop = elements.dialogueContainer.scrollHeight;
+}
+
+function updateXray(xray, state) {
+    if (!xray) return;
+
+    // Thought - 总是更新，即使为 null
+    if (xray.thought) {
+        elements.xrayThought.innerHTML = `<span>${escapeHtml(xray.thought)}</span>`;
+    } else {
+        elements.xrayThought.innerHTML = '<span class="placeholder">无思维过程</span>';
+    }
+
+    // Action - 总是更新
+    if (xray.action) {
+        let actionHtml = `<span>${escapeHtml(xray.action)}</span>`;
+        if (xray.action_nlg) {
+            actionHtml += `<br><small style="color: var(--text-muted)">${escapeHtml(xray.action_nlg)}</small>`;
+        }
+        elements.xrayAction.innerHTML = actionHtml;
+    } else {
+        elements.xrayAction.innerHTML = '<span class="placeholder">-</span>';
+    }
+
+    // State
+    if (state) {
+        elements.xrayNode.textContent = state.node_id || '-';
+        elements.xrayPatience.textContent = state.patience ?? 2;
+        elements.xrayReward.textContent = (state.total_reward || 0).toFixed(2);
+    }
+
+    // Sentiment - 总是更新
+    elements.xraySentiment.textContent = xray.sentiment || '-';
+
+    // Available skills - 总是更新
+    if (xray.available_skills && xray.available_skills.length > 0) {
+        elements.xraySkills.innerHTML = xray.available_skills.map(skill =>
+            `<span class="skill-tag valid">${skill}</span>`
+        ).join('');
+    } else {
+        elements.xraySkills.innerHTML = '<span class="placeholder">-</span>';
+    }
+
+    // System message - 累积显示
+    if (xray.system_message) {
+        const isWarning = xray.system_message.includes('警告');
+        const isError = xray.system_message.includes('偏航') || xray.system_message.includes('严重');
+
+        const logClass = isError ? 'error' : (isWarning ? 'warning' : '');
+
+        elements.xraySystem.innerHTML = `
+            <div class="log-entry ${logClass}">${escapeHtml(xray.system_message)}</div>
+        ` + elements.xraySystem.innerHTML;
+    }
+
+    // Reward (step reward)
+    if (xray.reward !== undefined) {
+        // 显示单步奖励
+    }
+}
+
+function enableControls(enabled) {
+    elements.btnStep.disabled = !enabled;
+    elements.btnAutorun.disabled = !enabled;
+    elements.btnReset.disabled = !enabled;
+}
+
+function disableOnDone(won) {
+    elements.btnStep.disabled = true;
+    elements.btnAutorun.disabled = true;
+
+    // 显示结束消息
+    const endMsg = document.createElement('div');
+    endMsg.className = `msg-bubble system ${won ? '' : 'warning'}`;
+    endMsg.innerHTML = `
+        <div class="msg-role">结局</div>
+        <div class="msg-content">${won ? '✅ 对话成功完成！' : '❌ 对话失败，买家已离开'}</div>
+    `;
+    elements.dialogueContainer.appendChild(endMsg);
+    elements.dialogueContainer.scrollTop = elements.dialogueContainer.scrollHeight;
+}
+
+function resetUI() {
+    elements.sessionInfo.style.display = 'none';
+    elements.dialogueContainer.innerHTML = '<div class="dialogue-empty">请先选择剧本并点击"初始化"</div>';
+    elements.xrayThought.innerHTML = '<span class="placeholder">等待推演...</span>';
+    elements.xrayAction.innerHTML = '<span class="placeholder">-</span>';
+    elements.xrayNode.textContent = '-';
+    elements.xrayPatience.textContent = '-';
+    elements.xrayReward.textContent = '-';
+    elements.xraySentiment.textContent = '-';
+    elements.xraySkills.innerHTML = '<span class="placeholder">-</span>';
+    elements.xraySystem.innerHTML = '<span class="placeholder">暂无系统消息</span>';
+    elements.rawOutput.textContent = '-';
+
+    enableControls(false);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}
