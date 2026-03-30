@@ -691,6 +691,7 @@ class RayPPOTrainer:
         data_source_lst = []
         tool_calling_list = []
         traj_uid_list = []
+        env_kwargs_list = []  # NEW: collect env_kwargs for playbook_id
         success_rate_dict = {}
 
         # Lists to collect samples for the table
@@ -772,6 +773,7 @@ class RayPPOTrainer:
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
+            env_kwargs_list.append(test_batch.non_tensor_batch.get('env_kwargs', [{}] * reward_tensor.shape[0]))  # NEW
             # success rate
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
@@ -788,6 +790,7 @@ class RayPPOTrainer:
         data_sources = np.concatenate(data_source_lst, axis=0)
         tool_callings = np.concatenate(tool_calling_list, axis=0)
         traj_uids = np.concatenate(traj_uid_list, axis=0)
+        env_kwargs = np.concatenate(env_kwargs_list, axis=0)  # NEW: concatenate env_kwargs
         success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
 
         # evaluate test_score based on data source
@@ -823,6 +826,18 @@ class RayPPOTrainer:
         for k, v in success_rate.items():
             metric_dict[f'val/{k}'] = v
 
+        # === Save Bad Cases ===
+        if self.config.trainer.get('save_bad_cases', False):
+            self._save_bad_cases(
+                sample_inputs=sample_inputs,
+                sample_outputs=sample_outputs,
+                sample_scores=sample_scores,
+                success_rate=success_rate,
+                data_sources=data_sources,
+                traj_uids=traj_uids,
+                env_kwargs=env_kwargs,
+            )
+
         # === Skill Bank 动态更新 ===
         if self.config.env.get('skills_only_memory', {}).get('enable_dynamic_update', False):
             self._update_skills_from_validation(
@@ -833,6 +848,79 @@ class RayPPOTrainer:
             )
 
         return metric_dict
+
+    def _save_bad_cases(
+        self,
+        sample_inputs: list,
+        sample_outputs: list,
+        sample_scores: list,
+        success_rate: dict,
+        data_sources: 'np.ndarray | None' = None,
+        traj_uids: 'np.ndarray | None' = None,
+        env_kwargs: 'np.ndarray | None' = None,
+    ):
+        """Save bad cases (failures) to a JSON file for analysis."""
+        import json
+        from datetime import datetime
+
+        bad_cases = []
+        for i, (inp, out, score) in enumerate(zip(sample_inputs, sample_outputs, sample_scores)):
+            if score <= 0:  # Failed trajectory
+                # Get unique identifiers from metadata
+                playbook_id = ''
+                scenario = ''
+                traj_uid = ''
+
+                if env_kwargs is not None and i < len(env_kwargs):
+                    env_kw = env_kwargs[i]
+                    if isinstance(env_kw, dict):
+                        playbook_id = env_kw.get('playbook_id', '')
+                if data_sources is not None and i < len(data_sources):
+                    scenario = str(data_sources[i])
+                if traj_uids is not None and i < len(traj_uids):
+                    traj_uid = str(traj_uids[i])
+
+                # Extract user query from input (skip system prompt)
+                task_type = self._detect_task_type_from_input(inp)
+                user_query = self._extract_user_query(inp)  # NEW: better extraction
+                trajectory = self._parse_conversation_to_steps(inp, out)
+
+                bad_cases.append({
+                    'playbook_id': playbook_id,  # NEW: unique identifier
+                    'scenario': scenario,  # NEW: data source
+                    'traj_uid': traj_uid,  # NEW: trajectory UID
+                    'user_query': user_query,  # NEW: actual user query
+                    'task_type': task_type,
+                    'trajectory': trajectory,
+                    'score': score,
+                })
+
+        if not bad_cases:
+            print("[BadCases] No failures to save")
+            return
+
+        # Save to file
+        output_dir = self.config.trainer.get('bad_cases_output_dir', 'outputs/bad_cases')
+        os.makedirs(output_dir, exist_ok=True)
+
+        filename = os.path.join(
+            output_dir,
+            f'bad_cases_step{self.global_steps}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        )
+
+        output_data = {
+            'timestamp': datetime.now().isoformat(),
+            'global_steps': self.global_steps,
+            'total_samples': len(sample_inputs),
+            'total_failures': len(bad_cases),
+            'success_rate': success_rate,
+            'bad_cases': bad_cases,
+        }
+
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+        print(f"[BadCases] Saved {len(bad_cases)} failures to {filename}")
 
     def _update_skills_from_validation(
         self,
@@ -956,6 +1044,41 @@ class RayPPOTrainer:
                 start = idx + len(marker)
                 return inp[start:start + 1000]
         return inp[:1000]
+
+    def _extract_user_query(self, inp: str) -> str:
+        """
+        Extract the actual user query from the first user turn.
+
+        For CustomerService, this extracts the buyer message and scenario info.
+        """
+        import re
+
+        # ChatML format: <|im_start|>user\n...<|im_end|>
+        user_match = re.search(
+            r'<\|im_start\|>user\n(.*?)<\|im_end\|>',
+            inp, re.DOTALL
+        )
+        if user_match:
+            user_content = user_match.group(1).strip()
+            # Try to extract the buyer message specifically
+            # Format: "## 买家消息\n{buyer_text}"
+            buyer_match = re.search(
+                r'## 买家消息\s*\n(.*?)(?=\n##|\n<\|im_end\|>|$)',
+                user_content, re.DOTALL
+            )
+            if buyer_match:
+                return buyer_match.group(1).strip()[:500]
+            return user_content[:500]
+
+        # Human/Assistant format
+        human_match = re.search(
+            r'(?:Human|User)[：:]\s*(.*?)(?=(?:Human|User|Assistant)[：:]|$)',
+            inp, re.DOTALL | re.IGNORECASE
+        )
+        if human_match:
+            return human_match.group(1).strip()[:500]
+
+        return inp[:500]
 
     def _parse_conversation_to_steps(self, inp: str, out: str) -> list:
         """

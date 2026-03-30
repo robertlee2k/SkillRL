@@ -114,6 +114,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=30 \
     trainer.test_freq=5 \
     +trainer.val_freq=10 \
+    +trainer.save_bad_cases=True \
+    +trainer.bad_cases_output_dir=outputs/bad_cases \
     trainer.total_epochs=3 \
     trainer.val_before_train=True \
     trainer.default_local_dir=/home/bo.li/data/SkillRL/checkpoints/customer_service/grpo_baseline "$@"

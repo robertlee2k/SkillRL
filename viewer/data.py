@@ -24,7 +24,18 @@ class DataLoader:
         if PLAYBOOKS_PATH.exists():
             with open(PLAYBOOKS_PATH, encoding="utf-8") as f:
                 data = json.load(f)
-            self._playbooks = [Playbook(**item) for item in data]
+
+            # 处理每个 playbook，计算缺失的 rl_steps
+            processed_playbooks = []
+            for item in data:
+                # 如果 rl_steps 缺失，基于 effective_turn_count 计算
+                if item.get('rl_steps') is None and item.get('effective_turn_count') is not None:
+                    # rl_steps = User turns 数量 ≈ (total turns + 1) // 2
+                    item['rl_steps'] = (item['effective_turn_count'] + 1) // 2
+
+                processed_playbooks.append(Playbook(**item))
+
+            self._playbooks = processed_playbooks
             self._playbook_by_id = {p.playbook_id: p for p in self._playbooks}
 
         # 加载 sessions

@@ -41,13 +41,16 @@ from collections import Counter, defaultdict
 from datetime import datetime
 import traceback
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+# NOTE: ALL torch-related imports are inside worker functions to ensure
+# CUDA_VISIBLE_DEVICES is set before any CUDA initialization in spawn mode.
+# DO NOT add any imports here that transitively import torch, including:
+#   - etl.rl_interfaces (imports agent_system.environments.base which imports torch)
+#   - agent_system.* (imports torch)
+#   - transformers (imports torch)
 
-# Import the correct prompt builder from training code
 import sys
 sys.path.insert(0, '/home/bo.li/SkillRL')
-from etl.rl_interfaces import CustomerServicePromptBuilder
+# CustomerServicePromptBuilder import moved inside GPUWorker._run_rollout()
 
 # Configure logging
 logging.basicConfig(
@@ -172,14 +175,19 @@ class GPUWorker:
         self.model = None
         self.tokenizer = None
         self.env = None
+        self.torch = None  # Store torch reference for _run_rollout
 
     def setup(self):
         """Initialize model and environment on the assigned GPU."""
-        # Set CUDA device
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(self.gpu_id)
+        # CUDA_VISIBLE_DEVICES already set in worker_process before torch import
 
-        # Import here to avoid CUDA init issues
+        # Import torch and transformers here (after CUDA_VISIBLE_DEVICES is set)
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
         from etl.customer_service_env import CustomerServiceEnv
+
+        # Store torch reference for later use
+        self.torch = torch
 
         # Load model with memory limit
         max_memory = {0: f"{self.max_memory_gb}GiB"}
@@ -225,6 +233,9 @@ class GPUWorker:
 
     def _run_rollout(self, playbook_id: str) -> RolloutTrace:
         """Execute a single episode rollout."""
+        # Import prompt builder here (after CUDA_VISIBLE_DEVICES is set in worker_process)
+        from etl.rl_interfaces import CustomerServicePromptBuilder
+
         observation, info = self.env.reset(playbook_id=playbook_id)
 
         trace = RolloutTrace(
@@ -245,7 +256,7 @@ class GPUWorker:
             # Generate response
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
 
-            with torch.no_grad():
+            with self.torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=512,
@@ -302,6 +313,10 @@ def worker_process(
     max_steps: int
 ):
     """Worker process entry point."""
+    # CRITICAL: Set CUDA device BEFORE any torch/CUDA initialization
+    # This must be the very first thing in the worker process
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+
     try:
         worker = GPUWorker(
             gpu_id=gpu_id,
@@ -721,7 +736,8 @@ Examples:
     )
     parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all.json',
                         help='Path to playbooks JSON file')
-    parser.add_argument('--checkpoint_path', type=str, default='outputs/hf_checkpoints/epoch_40',
+    parser.add_argument('--checkpoint_path', type=str,
+                        default='/home/bo.li/data/SkillRL/skillrl_models/customer_service/epoch_160',
                         help='Path to HF checkpoint directory')
     parser.add_argument('--num_samples', type=int, default=0,
                         help='Number of samples to analyze (0 = all)')
