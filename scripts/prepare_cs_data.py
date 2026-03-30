@@ -52,22 +52,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# System prompt for customer service agent
-SYSTEM_PROMPT = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
-你的目标是高效解决买家问题，促成交易或妥善处理售后，同时避免激怒买家。
+# Import shared prompt components (DRY principle - single source of truth)
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from etl.prompt_config import get_system_prompt, PRIORITY_WATERFALL_RULES
 
-你需要在每一步选择正确的服务动作。你的输出格式必须是：
-
-<tool_call>
-[你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
-<action>skill_id</action>
-
-可用的动作 ID 包括：
-- 通用: gen_greet, gen_empathize, gen_clarify, gen_verify_order, gen_hold, gen_transfer, gen_apologize, gen_close
-- 售前: pre_query_product, pre_check_stock, pre_compare, pre_recommend, pre_answer_spec, pre_check_promo, pre_guide_purchase
-- 物流: log_query_status, log_query_detail, log_estimate_arrival, log_modify_address, log_contact_courier, log_delay_notify, log_lost_claim
-- 售后: aft_check_policy, aft_collect_evidence, aft_initiate_refund, aft_initiate_return, aft_initiate_exchange, aft_schedule_pickup, aft_track_progress, aft_compensate, aft_reject_explain
-"""
+# System prompt for customer service agent (from shared config)
+SYSTEM_PROMPT = get_system_prompt(include_waterfall_rules=True)
 
 
 class DataPreparationReport:
