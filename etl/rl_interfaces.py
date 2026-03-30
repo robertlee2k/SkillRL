@@ -27,6 +27,8 @@ agent_system.environments.env_manager.
 from typing import List, Tuple, Dict, Any, Optional
 import re
 import logging
+import json
+import os
 import numpy as np
 from numpy.typing import NDArray
 
@@ -38,6 +40,138 @@ from etl.customer_service_env import VALID_SKILLS, HIGH_RISK_SKILLS
 from etl.config import SKILL_DEFINITIONS
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Global Skill Registry Loading (Static Injection)
+# =============================================================================
+
+# Load skill registry with common_mistakes at module level
+SKILL_REGISTRY_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "memory_data/customer_service/claude_style_skills.json"
+)
+
+SKILL_DICT: Dict[str, Dict[str, Any]] = {}
+
+def _load_skill_registry() -> Dict[str, Dict[str, Any]]:
+    """Load skill registry from JSON file and build lookup dict by skill_name."""
+    global SKILL_DICT
+    if not os.path.exists(SKILL_REGISTRY_PATH):
+        logger.warning(f"[SkillRegistry] File not found: {SKILL_REGISTRY_PATH}")
+        return {}
+
+    try:
+        with open(SKILL_REGISTRY_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Build lookup dict: skill_name -> skill_info
+        skill_lookup = {}
+
+        # Process general_skills
+        for skill in data.get('general_skills', []):
+            skill_name = skill.get('skill_name', '')
+            if skill_name:
+                skill_lookup[skill_name] = skill
+
+        # Process task_specific_skills (presale, logistics, aftersale)
+        for scenario, skills in data.get('task_specific_skills', {}).items():
+            for skill in skills:
+                skill_name = skill.get('skill_name', '')
+                if skill_name:
+                    skill_lookup[skill_name] = skill
+
+        SKILL_DICT = skill_lookup
+        logger.info(f"[SkillRegistry] Loaded {len(SKILL_DICT)} skills from {SKILL_REGISTRY_PATH}")
+        return skill_lookup
+
+    except Exception as e:
+        logger.error(f"[SkillRegistry] Failed to load: {e}")
+        return {}
+
+# Load at module import time
+SKILL_DICT = _load_skill_registry()
+
+
+# =============================================================================
+# Priority Waterfall Decision Rules
+# =============================================================================
+
+PRIORITY_WATERFALL_RULES = """
+### 决策优先级规则（必须严格遵守）
+
+按以下优先级顺序选择动作：
+
+1. **场景匹配优先**: 首先识别当前场景类型（售前/物流/售后），优先选择该场景的专用动作
+2. **用户诉求响应优先**: 有明确诉求时，优先响应用户核心问题，避免冗余澄清或安抚
+3. **信息完整性优先**: 信息不全时，优先收集必要信息（订单号、商品信息等），而非跳过处理环节
+4. **自助解答优先**: 常见问题优先自助解答（知识库查询、规格参数等），转人工仅作为最后兜底
+5. **避免动作滥用**:
+   - 禁止无明确负面情绪时触发 gen_empathize
+   - 禁止需求已明确时触发 gen_clarify
+   - 禁止信息完整时重复触发 gen_verify_order
+   - 禁止常见问题可解答时直接转人工 gen_transfer
+"""
+
+
+# =============================================================================
+# Rich Skill Formatting Helper
+# =============================================================================
+
+def _format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any]) -> str:
+    """
+    Format a skill with rich information including common mistakes.
+
+    Args:
+        skill_name: The skill ID (e.g., 'gen_clarify')
+        skill_info: Skill info from SKILL_DICT containing title, principle, common_mistakes
+
+    Returns:
+        Formatted skill description string
+    """
+    if not skill_info:
+        # Fallback to basic description
+        basic_desc = SKILL_DEFINITIONS.get(skill_name, {}).get('description', '未知动作')
+        return f"**{skill_name}**: {basic_desc}"
+
+    title = skill_info.get('title', skill_name)
+    principle = skill_info.get('principle', '')
+
+    # Format common mistakes as bullet points
+    mistakes = skill_info.get('common_mistakes', [])
+    mistakes_formatted = ""
+    if mistakes:
+        mistakes_lines = []
+        for m in mistakes[:2]:  # Limit to top 2 mistakes per skill to avoid bloat
+            trigger = m.get('trigger_condition', '')
+            avoid = m.get('how_to_avoid', '')
+            if trigger and avoid:
+                # Truncate for readability
+                trigger_short = trigger[:100] + "..." if len(trigger) > 100 else trigger
+                avoid_short = avoid[:80] + "..." if len(avoid) > 80 else avoid
+                mistakes_lines.append(f"    - ⚠️ {trigger_short}\n      → {avoid_short}")
+        if mistakes_lines:
+            mistakes_formatted = "\n  【常见误用场景】:\n" + "\n".join(mistakes_lines)
+
+    return f"**{skill_name}**: {title}\n  用途: {principle}{mistakes_formatted}"
+
+
+def _format_available_skills_rich(available_skills: List[str]) -> str:
+    """
+    Format available skills list with rich information from SKILL_DICT.
+
+    Args:
+        available_skills: List of skill IDs available at current node
+
+    Returns:
+        Formatted skills section string
+    """
+    formatted_lines = []
+    for skill in available_skills:
+        skill_info = SKILL_DICT.get(skill, {})
+        formatted_lines.append(_format_skill_with_mistakes(skill, skill_info))
+
+    return "\n\n".join(formatted_lines)
 
 
 # =============================================================================
@@ -57,6 +191,8 @@ IDX_TO_SKILL_ID: Dict[int, str] = {i: skill for skill, i in SKILL_ID_TO_IDX.item
 # =============================================================================
 
 CUSTOMER_SERVICE_TEMPLATE_NO_HIS = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
+
+{priority_waterfall_rules}
 
 ## 当前对话状态
 
@@ -96,6 +232,8 @@ CUSTOMER_SERVICE_TEMPLATE_NO_HIS = """你是一名专业的电商客服智能助
 """
 
 CUSTOMER_SERVICE_TEMPLATE = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。你的任务是: {task_description}
+
+{priority_waterfall_rules}
 
 ## 历史对话记录
 
@@ -404,11 +542,9 @@ class CustomerServicePromptBuilder:
         dialogue_history = observation.get("dialogue_history", [])
         action_history = observation.get("action_history", [])
 
-        # Format available skills with descriptions
-        available_skills_formatted = "\n".join([
-            f"- `{skill}`: {SKILL_DEFINITIONS.get(skill, {}).get('description', '未知动作')}"
-            for skill in available_skills
-        ])
+        # Format available skills with rich information (including common_mistakes)
+        # NOTE: node_id is NOT exposed to prevent cheating - only skill_name is shown
+        available_skills_formatted = _format_available_skills_rich(available_skills)
 
         # Format slots
         if slots:
@@ -447,6 +583,7 @@ class CustomerServicePromptBuilder:
             action_len = len(action_history) if action_history else 0
             return CUSTOMER_SERVICE_TEMPLATE.format(
                 task_description=f"处理{scenario}场景下的客户问题",
+                priority_waterfall_rules=PRIORITY_WATERFALL_RULES,
                 step_count=action_len,
                 history_length=min(history_length, len(dialogue_history) // 2),
                 action_history=dialogue_text,
@@ -460,6 +597,7 @@ class CustomerServicePromptBuilder:
             )
         else:
             return CUSTOMER_SERVICE_TEMPLATE_NO_HIS.format(
+                priority_waterfall_rules=PRIORITY_WATERFALL_RULES,
                 scenario=scenario,
                 sentiment=sentiment,
                 buyer_text=buyer_text,
