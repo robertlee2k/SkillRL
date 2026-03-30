@@ -1,26 +1,28 @@
 #!/usr/bin/env python
 """
-Offline Skill Evolution Script for Customer Service Agent.
+Offline Skill Evolution Script with MapReduce Architecture.
 
-This script implements a "Data Flywheel" architecture:
+This script implements a "Data Flywheel" architecture with MapReduce:
 1. Load failed trajectories from analyze_bad_cases.py output
 2. Group failures by error action
-3. Call Doubao LLM to analyze root causes
-4. Generate common_mistakes (anti-patterns) for each skill
+3. Map Phase: Process failure chunks in parallel with LLM
+4. Reduce Phase: Deduplicate and synthesize final mistakes
 5. Update the skill registry JSON file
 
 Usage:
     python scripts/evolve_skills.py \
-        --trace_path outputs/short_bad_cases_trace.json \
+        --trace_path outputs/recovered_bad_cases_step90.json \
         --output_path memory_data/customer_service/claude_style_skills.json \
         --min_failures 3 \
-        --max_mistakes_per_action 5
+        --batch_size 10 \
+        --max_workers 5
 
 Environment Variables:
     VOLC_API_KEY - Volcano Engine (Doubao) API key
 """
 
 import os
+import sys
 import json
 import argparse
 import logging
@@ -28,6 +30,8 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import traceback
 
 from openai import OpenAI
 
@@ -112,6 +116,10 @@ SKILL_DESCRIPTIONS = {
     'aft_reject_explain': '拒绝申请并说明原因'
 }
 
+# Default batch size for chunking
+DEFAULT_BATCH_SIZE = 10
+DEFAULT_MAX_WORKERS = 5
+
 
 # =============================================================================
 # LLM Client (Doubao via Volcano Engine)
@@ -180,7 +188,7 @@ class ActionFailureGroup:
 
 
 # =============================================================================
-# Core Logic
+# Core Logic - Data Loading & Grouping
 # =============================================================================
 
 def load_trace_data(trace_path: str) -> Dict[str, Any]:
@@ -224,7 +232,6 @@ def extract_error_contexts(bad_cases: List[Dict]) -> List[ErrorContext]:
             patience_after = error.get('patience_after', 0)
 
             # Get dialogue before this step (last 3 turns)
-            # dialogue_history includes both buyer and agent messages
             dialogue_before = dialogue_history[-6:] if len(dialogue_history) >= 6 else dialogue_history
 
             ctx = ErrorContext(
@@ -250,13 +257,6 @@ def group_failures_by_action(
 ) -> List[ActionFailureGroup]:
     """
     Group error contexts by action, filter by minimum failure count.
-
-    Args:
-        contexts: List of error contexts
-        min_failures: Minimum number of failures to consider an action
-
-    Returns:
-        List of ActionFailureGroup sorted by count (descending)
     """
     action_to_contexts = defaultdict(list)
 
@@ -283,38 +283,41 @@ def group_failures_by_action(
     return groups
 
 
-def build_analysis_prompt(group: ActionFailureGroup) -> str:
-    """
-    Build the critic prompt for analyzing failures of a specific action.
+# =============================================================================
+# Map Phase - Chunk Processing
+# =============================================================================
 
-    The prompt asks Doubao to:
-    1. Analyze the failure patterns
-    2. Identify trigger conditions (when model wrongly chooses this action)
-    3. Provide avoidance guidance
-    """
-    action = group.action
-    description = SKILL_DESCRIPTIONS.get(action, '未知动作')
-    sample_contexts = group.contexts[:5]  # Take at most 5 examples
+def chunk_contexts(contexts: List[ErrorContext], batch_size: int) -> List[List[ErrorContext]]:
+    """Split contexts into chunks of specified batch size."""
+    chunks = []
+    for i in range(0, len(contexts), batch_size):
+        chunks.append(contexts[i:i + batch_size])
+    return chunks
 
-    # Format example failures
-    examples_text = []
-    for i, ctx in enumerate(sample_contexts, 1):
-        dialogue_str = ""
-        for turn in ctx.dialogue_before:
-            role = turn.get('role', 'unknown')
-            content = turn.get('content', '')[:100]  # Truncate
-            dialogue_str += f"  [{role}] {content}\n"
 
-        examples_text.append(f"""
-Example {i} (Scenario: {ctx.scenario}, Step {ctx.step}):
+def format_context_for_prompt(ctx: ErrorContext) -> str:
+    """Format a single error context for the prompt."""
+    dialogue_str = ""
+    for turn in ctx.dialogue_before:
+        role = turn.get('role', 'unknown')
+        content = turn.get('content', '')[:100]  # Truncate
+        dialogue_str += f"  [{role}] {content}\n"
+
+    return f"""
+Example (Scenario: {ctx.scenario}, Step {ctx.step}):
 Dialogue before error:
 {dialogue_str}
 Model's reasoning: {ctx.reasoning[:200] if ctx.reasoning else '(no reasoning)'}
 System feedback: {ctx.system_message[:150] if ctx.system_message else '(none)'}
-Patience change: {ctx.patience_before} -> {ctx.patience_after}
----""")
+---"""
 
-    examples_block = "\n".join(examples_text)
+
+def build_map_prompt(action: str, description: str, chunk: List[ErrorContext]) -> str:
+    """Build the prompt for MAP phase (chunk analysis)."""
+    examples_block = "\n".join([
+        format_context_for_prompt(ctx)
+        for ctx in chunk
+    ])
 
     prompt = f"""你是一名资深的电商客服训练专家，负责分析客服AI模型的错误决策模式。
 
@@ -327,7 +330,7 @@ Patience change: {ctx.patience_before} -> {ctx.patience_after}
 
 **动作ID**: `{action}`
 **动作描述**: {description}
-**失败次数**: {group.count} 次
+**本批次样本数**: {len(chunk)}
 
 ## 错误案例
 
@@ -402,11 +405,131 @@ def parse_mistakes_response(response: str) -> List[Dict[str, str]]:
         return []
 
 
+def map_analyze_chunk(
+    client: DoubaoClient,
+    action: str,
+    description: str,
+    chunk: List[ErrorContext],
+    chunk_idx: int,
+    total_chunks: int
+) -> Tuple[int, List[Dict[str, str]]]:
+    """
+    Map phase: Analyze a single chunk of failure contexts.
+
+    Returns:
+        (chunk_idx, list of mistakes)
+    """
+    try:
+        prompt = build_map_prompt(action, description, chunk)
+        response = client.analyze(prompt)
+        mistakes = parse_mistakes_response(response)
+
+        logger.info(f"  [Map] Chunk {chunk_idx + 1}/{total_chunks}: extracted {len(mistakes)} mistakes")
+        return (chunk_idx, mistakes)
+
+    except Exception as e:
+        logger.error(f"  [Map] Chunk {chunk_idx + 1}/{total_chunks} failed: {e}")
+        return (chunk_idx, [])
+
+
+# =============================================================================
+# Reduce Phase - Deduplication & Synthesis
+# =============================================================================
+
+def build_reduce_prompt(action: str, description: str, all_mistakes: List[Dict[str, str]]) -> str:
+    """Build the prompt for REDUCE phase (deduplication and synthesis)."""
+    mistakes_json = json.dumps(all_mistakes, ensure_ascii=False, indent=2)
+
+    prompt = f"""你是一个业务规则归纳专家。针对客服动作 `{action}`，我们从海量报错中提取了以下避坑指南碎片：
+
+{mistakes_json}
+
+其中包含大量重复或相似的规则。请你对它们进行全局去重、合并和提炼。
+
+## 动作信息
+
+**动作ID**: `{action}`
+**动作描述**: {description}
+**原始规则数量**: {len(all_mistakes)}
+
+## 任务要求
+
+1. **去重**: 合并意思相近的触发条件
+2. **提炼**: 提取最致命、最具代表性的 3-5 条终极避坑指南
+3. **精简**: 每条规则要简洁明了，直击要点
+
+## 输出格式
+
+请严格输出以下JSON格式，不要有其他文字：
+
+```json
+[
+  {{
+    "trigger_condition": "描述触发错误的具体场景（1-2句话）",
+    "how_to_avoid": "描述正确的做法和原因（1-2句话）"
+  }},
+  {{
+    "trigger_condition": "另一个触发场景",
+    "how_to_avoid": "对应的避免方法"
+  }}
+]
+```
+
+请生成 3-5 条最关键的终极避坑指南。只输出JSON数组，不要有任何解释文字。
+"""
+
+    return prompt
+
+
+def reduce_mistakes(
+    client: DoubaoClient,
+    action: str,
+    description: str,
+    all_mapped_mistakes: List[Dict[str, str]]
+) -> List[Dict[str, str]]:
+    """
+    Reduce phase: Deduplicate and synthesize all mapped mistakes.
+
+    Args:
+        client: LLM client
+        action: The skill/action name
+        description: Skill description
+        all_mapped_mistakes: All mistakes from MAP phase
+
+    Returns:
+        Final list of deduplicated, synthesized mistakes (3-5 items)
+    """
+    if not all_mapped_mistakes:
+        return []
+
+    # If we have few mistakes already, no need to reduce
+    if len(all_mapped_mistakes) <= 5:
+        logger.info(f"  [Reduce] Only {len(all_mapped_mistakes)} mistakes, skip reduce")
+        return all_mapped_mistakes
+
+    logger.info(f"  [Reduce] Synthesizing {len(all_mapped_mistakes)} mistakes into 3-5 final rules...")
+
+    try:
+        prompt = build_reduce_prompt(action, description, all_mapped_mistakes)
+        response = client.analyze(prompt)
+        final_mistakes = parse_mistakes_response(response)
+
+        logger.info(f"  [Reduce] Synthesized to {len(final_mistakes)} final mistakes")
+        return final_mistakes
+
+    except Exception as e:
+        logger.error(f"  [Reduce] Failed: {e}")
+        # Fallback: return first 5 mistakes
+        return all_mapped_mistakes[:5]
+
+
+# =============================================================================
+# Registry Management
+# =============================================================================
+
 def load_or_create_skills_registry(skills_path: str) -> Dict[str, Any]:
     """
     Load existing skills registry or create a new one from VALID_SKILLS.
-
-    The registry follows the claude_style_skills.json format used by WebShop.
     """
     if os.path.exists(skills_path):
         with open(skills_path, 'r', encoding='utf-8') as f:
@@ -478,7 +601,7 @@ def load_or_create_skills_registry(skills_path: str) -> Dict[str, Any]:
         'metadata': {
             'source': 'generated by evolve_skills.py',
             'created_at': datetime.now().isoformat(),
-            'version': '1.0'
+            'version': '2.0-mapreduce'
         }
     }
 
@@ -494,7 +617,6 @@ def find_skill_in_registry(
 
     Returns:
         (skill_dict, location) where location is 'general' or 'task_specific/{category}'
-        Returns (None, '') if not found
     """
     # Check general skills
     for skill in registry.get('general_skills', []):
@@ -513,20 +635,11 @@ def find_skill_in_registry(
 def update_registry_with_mistakes(
     registry: Dict[str, Any],
     action: str,
-    new_mistakes: List[Dict[str, str]],
+    final_mistakes: List[Dict[str, str]],
     max_mistakes_per_action: int = 5
 ) -> int:
     """
-    Update the registry with new common_mistakes for an action.
-
-    Args:
-        registry: The skills registry dict
-        action: The skill_name to update
-        new_mistakes: List of {trigger_condition, how_to_avoid} dicts
-        max_mistakes_per_action: Maximum mistakes to keep per action
-
-    Returns:
-        Number of mistakes actually added
+    Update the registry with final synthesized mistakes for an action.
     """
     skill, location = find_skill_in_registry(registry, action)
 
@@ -534,40 +647,18 @@ def update_registry_with_mistakes(
         logger.warning(f"[Update] Skill not found in registry: {action}")
         return 0
 
-    # Get existing mistakes
-    existing = skill.get('common_mistakes', [])
+    # Replace existing mistakes with final synthesized ones (trimmed to max)
+    skill['common_mistakes'] = final_mistakes[:max_mistakes_per_action]
 
-    # Filter out duplicates (based on trigger_condition similarity)
-    added = 0
-    for new_m in new_mistakes:
-        # Simple duplicate check: exact trigger match
-        is_dup = False
-        for existing_m in existing:
-            if existing_m.get('trigger_condition') == new_m.get('trigger_condition'):
-                is_dup = True
-                break
-
-        if not is_dup:
-            existing.append(new_m)
-            added += 1
-
-    # Trim to max
-    if len(existing) > max_mistakes_per_action:
-        existing = existing[-max_mistakes_per_action:]  # Keep most recent
-
-    skill['common_mistakes'] = existing
-
-    logger.info(f"[Update] Added {added} mistakes to {action} (location: {location})")
-    return added
+    logger.info(f"[Update] Updated {action} with {len(skill['common_mistakes'])} mistakes (location: {location})")
+    return len(skill['common_mistakes'])
 
 
 def save_registry(registry: Dict[str, Any], output_path: str):
     """Save the updated registry to JSON file."""
-    # Update metadata
     registry['metadata']['last_updated'] = datetime.now().isoformat()
     registry['metadata']['update_count'] = registry['metadata'].get('update_count', 0) + 1
 
-    # Ensure directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -577,28 +668,96 @@ def save_registry(registry: Dict[str, Any], output_path: str):
 
 
 # =============================================================================
-# Main Entry Point
+# Main Entry Point - MapReduce Pipeline
 # =============================================================================
+
+def process_action_with_mapreduce(
+    client: DoubaoClient,
+    group: ActionFailureGroup,
+    batch_size: int,
+    max_workers: int,
+    max_mistakes_per_action: int
+) -> List[Dict[str, str]]:
+    """
+    Process a single action using MapReduce architecture.
+
+    1. Split contexts into chunks
+    2. Map: Parallel LLM analysis of each chunk
+    3. Reduce: Deduplicate and synthesize final mistakes
+    """
+    action = group.action
+    description = SKILL_DESCRIPTIONS.get(action, '未知动作')
+    contexts = group.contexts
+
+    # Split into chunks
+    chunks = chunk_contexts(contexts, batch_size)
+    total_chunks = len(chunks)
+
+    logger.info(f"  [MapReduce] {action}: {len(contexts)} failures -> {total_chunks} chunks")
+
+    # === MAP Phase: Parallel chunk analysis ===
+    all_mapped_mistakes = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                map_analyze_chunk,
+                client,
+                action,
+                description,
+                chunk,
+                idx,
+                total_chunks
+            ): idx
+            for idx, chunk in enumerate(chunks)
+        }
+
+        for future in as_completed(futures):
+            try:
+                chunk_idx, mistakes = future.result()
+                all_mapped_mistakes.extend(mistakes)
+            except Exception as e:
+                logger.error(f"  [Map] Chunk failed with exception: {e}")
+
+    logger.info(f"  [Map] Total extracted: {len(all_mapped_mistakes)} raw mistakes")
+
+    # === REDUCE Phase: Deduplicate and synthesize ===
+    final_mistakes = reduce_mistakes(
+        client,
+        action,
+        description,
+        all_mapped_mistakes
+    )
+
+    # Trim to max
+    final_mistakes = final_mistakes[:max_mistakes_per_action]
+
+    return final_mistakes
+
 
 def evolve_skills(
     trace_path: str,
     output_path: str,
     min_failures: int = 3,
     max_mistakes_per_action: int = 5,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_workers: int = DEFAULT_MAX_WORKERS,
     dry_run: bool = False
 ):
     """
-    Main skill evolution pipeline.
+    Main skill evolution pipeline with MapReduce architecture.
 
     Args:
-        trace_path: Path to bad_cases_trace.json
+        trace_path: Path to bad_cases JSON
         output_path: Path to claude_style_skills.json
         min_failures: Minimum failures to analyze an action
-        max_mistakes_per_action: Max mistakes per action
+        max_mistakes_per_action: Max final mistakes per action (after reduce)
+        batch_size: Number of contexts per chunk in MAP phase
+        max_workers: Number of parallel workers in MAP phase
         dry_run: If True, don't call LLM or save file
     """
     logger.info("=" * 60)
-    logger.info("SKILL EVOLUTION PIPELINE")
+    logger.info("SKILL EVOLUTION PIPELINE (MapReduce)")
     logger.info("=" * 60)
 
     # Step 1: Load trace data
@@ -622,7 +781,7 @@ def evolve_skills(
     # Step 4: Load or create registry
     registry = load_or_create_skills_registry(output_path)
 
-    # Step 5: Analyze each action with LLM
+    # Step 5: Process each action with MapReduce
     if dry_run:
         logger.info("[Dry Run] Skipping LLM analysis")
         return
@@ -630,31 +789,45 @@ def evolve_skills(
     client = DoubaoClient()
 
     total_added = 0
-    for group in groups:
-        logger.info(f"\n[Analyze] Processing action: {group.action} ({group.count} failures)")
+    stats = {
+        'actions_processed': 0,
+        'actions_failed': 0,
+        'total_mistakes': 0
+    }
 
-        prompt = build_analysis_prompt(group)
+    for group in groups:
+        logger.info(f"\n[Action] Processing: {group.action} ({group.count} failures)")
 
         try:
-            response = client.analyze(prompt)
-            mistakes = parse_mistakes_response(response)
+            final_mistakes = process_action_with_mapreduce(
+                client=client,
+                group=group,
+                batch_size=batch_size,
+                max_workers=max_workers,
+                max_mistakes_per_action=max_mistakes_per_action
+            )
 
-            if mistakes:
+            if final_mistakes:
                 added = update_registry_with_mistakes(
                     registry,
                     group.action,
-                    mistakes,
+                    final_mistakes,
                     max_mistakes_per_action
                 )
                 total_added += added
+                stats['total_mistakes'] += len(final_mistakes)
 
-                logger.info(f"[Analyze] Generated mistakes for {group.action}:")
-                for m in mistakes:
-                    logger.info(f"  - Trigger: {m['trigger_condition'][:50]}...")
-                    logger.info(f"    Avoid: {m['how_to_avoid'][:50]}...")
+                logger.info(f"  [Result] {group.action}: {len(final_mistakes)} final mistakes")
+                for m in final_mistakes:
+                    logger.info(f"    - Trigger: {m['trigger_condition'][:50]}...")
+                    logger.info(f"      Avoid: {m['how_to_avoid'][:50]}...")
+
+            stats['actions_processed'] += 1
 
         except Exception as e:
-            logger.error(f"[Analyze] Failed to analyze {group.action}: {e}")
+            logger.error(f"  [Error] Failed to process {group.action}: {e}")
+            traceback.print_exc()
+            stats['actions_failed'] += 1
             continue
 
     # Step 6: Save updated registry
@@ -666,19 +839,21 @@ def evolve_skills(
     logger.info("=" * 60)
     logger.info(f"Total bad cases analyzed: {len(bad_cases)}")
     logger.info(f"Actions with >= {min_failures} failures: {len(groups)}")
-    logger.info(f"Total mistakes added: {total_added}")
+    logger.info(f"Actions processed: {stats['actions_processed']}")
+    logger.info(f"Actions failed: {stats['actions_failed']}")
+    logger.info(f"Total final mistakes: {stats['total_mistakes']}")
     logger.info(f"Registry saved to: {output_path}")
     logger.info("=" * 60)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Evolve skills from failure trajectories'
+        description='Evolve skills from failure trajectories with MapReduce'
     )
     parser.add_argument(
         '--trace_path',
         type=str,
-        default='outputs/short_bad_cases_trace.json',
+        default='outputs/recovered_bad_cases_step90.json',
         help='Path to bad cases trace JSON'
     )
     parser.add_argument(
@@ -697,7 +872,19 @@ def main():
         '--max_mistakes_per_action',
         type=int,
         default=5,
-        help='Maximum mistakes to keep per action'
+        help='Maximum final mistakes to keep per action'
+    )
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help='Number of contexts per chunk in MAP phase'
+    )
+    parser.add_argument(
+        '--max_workers',
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help='Number of parallel workers in MAP phase'
     )
     parser.add_argument(
         '--dry_run',
@@ -712,6 +899,8 @@ def main():
         output_path=args.output_path,
         min_failures=args.min_failures,
         max_mistakes_per_action=args.max_mistakes_per_action,
+        batch_size=args.batch_size,
+        max_workers=args.max_workers,
         dry_run=args.dry_run
     )
 

@@ -20,6 +20,7 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
+import re
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
@@ -877,20 +878,19 @@ class RayPPOTrainer:
                         playbook_id = env_kw.get('playbook_id', '')
                 if data_sources is not None and i < len(data_sources):
                     scenario = str(data_sources[i])
-                if traj_uids is not None and i < len(traj_uids):
-                    traj_uid = str(traj_uids[i])
 
-                # Extract user query from input (skip system prompt)
+                # task_type from prompt as fallback for scenario
                 task_type = self._detect_task_type_from_input(inp)
-                user_query = self._extract_user_query(inp)  # NEW: better extraction
+                if not scenario:
+                    scenario = task_type
+
+                user_query = self._extract_user_query(inp)
                 trajectory = self._parse_conversation_to_steps(inp, out)
 
                 bad_cases.append({
-                    'playbook_id': playbook_id,  # NEW: unique identifier
-                    'scenario': scenario,  # NEW: data source
-                    'traj_uid': traj_uid,  # NEW: trajectory UID
-                    'user_query': user_query,  # NEW: actual user query
-                    'task_type': task_type,
+                    'playbook_id': playbook_id,
+                    'scenario': scenario,
+                    'user_query': user_query,
                     'trajectory': trajectory,
                     'score': score,
                 })
@@ -1135,8 +1135,21 @@ class RayPPOTrainer:
         return steps
 
     def _detect_task_type_from_input(self, inp: str) -> str:
-        """从输入中检测任务类型"""
-        inp_lower = inp.lower()
+        """从输入中检测任务类型
+
+        For CustomerService: extracts scenario (presale/aftersale/logistics)
+        For AlfWorld: extracts task type (pick_and_place/heat/cool/clean/examine/look_at_obj_in_light)
+        """
+        # CustomerService: 场景类型: 售后服务 (aftersale)
+        scenario_match = inp and re.search(
+            r'场景类型:\s*[^\n\(]*\((\w+)\)',
+            inp
+        )
+        if scenario_match:
+            return scenario_match.group(1)  # presale/aftersale/logistics
+
+        # AlfWorld task types (fallback)
+        inp_lower = inp.lower() if inp else ''
         if 'clean' in inp_lower:
             return 'clean'
         elif 'heat' in inp_lower:
@@ -1148,7 +1161,7 @@ class RayPPOTrainer:
         elif 'examine' in inp_lower:
             return 'examine'
         else:
-            return 'pick_and_place'
+            return 'unknown'  # Changed from 'pick_and_place' to 'unknown' for better handling
 
     def init_workers(self):
         """Initialize distributed training workers using Ray backend.
