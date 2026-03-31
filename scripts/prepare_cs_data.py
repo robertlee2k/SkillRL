@@ -390,11 +390,15 @@ def create_initial_prompt(playbook: Dict[str, Any]) -> str:
     subtype = playbook.get('subtype', 'general')
     nodes = playbook.get('nodes', {})
 
-    # 🔴 新增：提取初始槽位（订单信息等）
-    initial_slots = playbook.get('initial_slots', {})
+    # 🔴 FIX: Merge initial_slots with root node's slot_updates
+    # Same logic as customer_service_env.py reset()
+    initial_slots = playbook.get('initial_slots', {}).copy()
+    root_node = nodes.get('root', {})
+    root_slot_updates = root_node.get('slot_updates', {})
+    # Merge: root slot_updates takes precedence
+    merged_slots = {**initial_slots, **root_slot_updates}
 
     # Get root node buyer text
-    root_node = nodes.get('root', {})
     buyer_text = root_node.get('buyer_text', '')
 
     scenario_desc = {
@@ -405,9 +409,9 @@ def create_initial_prompt(playbook: Dict[str, Any]) -> str:
     }.get(scenario, '客服咨询')
 
     # 🔴 新增：格式化槽位信息（与 rl_interfaces.py 保持完全一致）
-    if initial_slots:
+    if merged_slots:
         slots_formatted = "\n".join([
-            f"- {k}: {v}" for k, v in initial_slots.items()
+            f"- {k}: {v}" for k, v in merged_slots.items()
         ])
     else:
         slots_formatted = "（暂无槽位信息）"
