@@ -55,11 +55,7 @@ logger = logging.getLogger(__name__)
 # Import shared prompt components (DRY principle - single source of truth)
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from etl.prompt_config import get_system_prompt_for_parquet
-
-# System prompt for customer service agent (from shared config)
-# Uses ALL 31 skills since available_skills is determined at runtime by environment
-SYSTEM_PROMPT = get_system_prompt_for_parquet(include_waterfall_rules=True)
+from etl.prompt_config import get_system_prompt
 
 
 class DataPreparationReport:
@@ -444,12 +440,24 @@ def playbook_to_record(playbook: Dict[str, Any], idx: int) -> Dict[str, Any]:
     rl_steps = playbook.get('rl_steps')
     effective_turn_count = playbook.get('effective_turn_count')
 
+    # 🔴 FIX: Get root node's available_skills for System Prompt
+    # This ensures first turn uses same logic as subsequent turns
+    nodes = playbook.get('nodes', {})
+    root_node = nodes.get('root', {})
+    root_available_skills = root_node.get('available_skills', [])
+
+    # Generate system prompt with ONLY root's available skills (not all 31)
+    system_prompt = get_system_prompt(
+        include_waterfall_rules=True,
+        available_skills=root_available_skills
+    )
+
     initial_prompt = create_initial_prompt(playbook)
 
     record = {
         'data_source': 'customer_service',
         'prompt': [
-            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': initial_prompt}
         ],
         'ability': 'agent',
