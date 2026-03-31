@@ -382,10 +382,16 @@ def drop_last_align(
 def create_initial_prompt(playbook: Dict[str, Any]) -> str:
     """
     Create the initial prompt for a playbook episode.
+
+    IMPORTANT: This must match the format in rl_interfaces.py CustomerServicePromptBuilder
+    to ensure first turn and subsequent turns have consistent slot information.
     """
     scenario = playbook.get('scenario', 'unknown')
     subtype = playbook.get('subtype', 'general')
     nodes = playbook.get('nodes', {})
+
+    # 🔴 新增：提取初始槽位（订单信息等）
+    initial_slots = playbook.get('initial_slots', {})
 
     # Get root node buyer text
     root_node = nodes.get('root', {})
@@ -398,9 +404,20 @@ def create_initial_prompt(playbook: Dict[str, Any]) -> str:
         'unknown': '客服咨询'
     }.get(scenario, '客服咨询')
 
+    # 🔴 新增：格式化槽位信息（与 rl_interfaces.py 保持完全一致）
+    if initial_slots:
+        slots_formatted = "\n".join([
+            f"- {k}: {v}" for k, v in initial_slots.items()
+        ])
+    else:
+        slots_formatted = "（暂无槽位信息）"
+
     prompt = f"""## 场景信息
 场景类型: {scenario_desc} ({scenario})
 子类型: {subtype}
+
+## 当前槽位状态
+{slots_formatted}
 
 ## 买家消息
 {buyer_text}
