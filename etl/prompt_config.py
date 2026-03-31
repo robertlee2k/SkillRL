@@ -1,6 +1,16 @@
 # Copyright 2025 Nanyang Technological University (NTU), Singapore
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Shared Prompt Configuration for Customer Service Agent.
@@ -68,23 +78,16 @@ SKILL_DICT = load_skill_registry()
 
 
 # =============================================================================
-# Priority Waterfall Decision Rules
+# Priority Waterfall Decision Rules (STRICT - DO NOT MODIFY)
 # =============================================================================
 
 PRIORITY_WATERFALL_RULES = """
-### 决策优先级规则（必须严格遵守）
+【🔴 动作决策全局瀑布流准则（严格遵守） 🔴】
+作为客服，你每轮只能输出唯一的动作ID。面对买家输入，你必须按以下优先级从上到下匹配，一旦命中立即输出，禁止降级：
 
-按以下优先级顺序选择动作：
-
-1. **场景匹配优先**: 首先识别当前场景类型（售前/物流/售后），优先选择该场景的专用动作
-2. **用户诉求响应优先**: 有明确诉求时，优先响应用户核心问题，避免冗余澄清或安抚
-3. **信息完整性优先**: 信息不全时，优先收集必要信息（订单号、商品信息等），而非跳过处理环节
-4. **自助解答优先**: 常见问题优先自助解答（知识库查询、规格参数等），转人工仅作为最后兜底
-5. **避免动作滥用**:
-   - 禁止无明确负面情绪时触发 gen_empathize
-   - 禁止需求已明确时触发 gen_clarify
-   - 禁止信息完整时重复触发 gen_verify_order
-   - 禁止常见问题可解答时直接转人工 gen_transfer
+- [优先级 1 - 核心业务]：若买家表达了具体的业务诉求（如问参数、查物流、退换货等），必须直接选择对应的业务动作（如 pre_answer_spec, log_query_status）。系统底层会自动为你对用户补齐问候或安抚话术，你只需输出业务 Action。
+- [优先级 2 - 信息收集]：若买家有业务诉求倾向，但意图模糊或缺失关键信息（如只发了一个链接），才能降级选择 gen_clarify 或 gen_verify_order。
+- [优先级 3 - 纯社交兜底]：**只有当**买家输入纯问候（如"你好"、"在吗"）或纯发泄情绪，且**完全没有包含任何业务诉求时**，才可降级选择 gen_greet 或 gen_empathize。
 """
 
 
@@ -119,11 +122,11 @@ def format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any], max_
             avoid = m.get('how_to_avoid', '')
             if trigger and avoid:
                 # Truncate for readability
-                trigger_short = trigger[:100] + "..." if len(trigger) > 100 else trigger
-                avoid_short = avoid[:80] + "..." if len(avoid) > 80 else avoid
-                mistakes_lines.append(f"    - ⚠️ {trigger_short}\n      → {avoid_short}")
+                trigger_short = trigger[:120] + "..." if len(trigger) > 120 else trigger
+                avoid_short = avoid[:100] + "..." if len(avoid) > 100 else avoid
+                mistakes_lines.append(f"    ⚠️ 误触发场景: {trigger_short}\n    ✓ 正确做法: {avoid_short}")
         if mistakes_lines:
-            mistakes_formatted = "\n  【常见误用场景】:\n" + "\n".join(mistakes_lines)
+            mistakes_formatted = "\n  " + "\n  ".join(mistakes_lines)
 
     return f"**{skill_name}**: {title}\n  用途: {principle}{mistakes_formatted}"
 
@@ -147,38 +150,82 @@ def format_available_skills_rich(available_skills: List[str], max_mistakes_per_s
     return "\n\n".join(formatted_lines)
 
 
+def get_all_skill_ids() -> List[str]:
+    """Get all skill IDs from SKILL_DICT."""
+    return list(SKILL_DICT.keys())
+
+
 # =============================================================================
-# System Prompt Base
+# System Prompt Base (Dynamic - uses rich skill format)
 # =============================================================================
 
 SYSTEM_PROMPT_BASE = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
 你的目标是高效解决买家问题，促成交易或妥善处理售后，同时避免激怒买家。
+
 {priority_waterfall_rules}
+
 你需要在每一步选择正确的服务动作。你的输出格式必须是：
 
 <tool_call>
 [你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
 <action>skill_id</action>
 
-可用的动作 ID 包括：
-- 通用: gen_greet, gen_empathize, gen_clarify, gen_verify_order, gen_hold, gen_transfer, gen_apologize, gen_close
-- 售前: pre_query_product, pre_check_stock, pre_compare, pre_recommend, pre_answer_spec, pre_check_promo, pre_guide_purchase
-- 物流: log_query_status, log_query_detail, log_estimate_arrival, log_modify_address, log_contact_courier, log_delay_notify, log_lost_claim
-- 售后: aft_check_policy, aft_collect_evidence, aft_initiate_refund, aft_initiate_return, aft_initiate_exchange, aft_schedule_pickup, aft_track_progress, aft_compensate, aft_reject_explain
+当前节点可用的动作及避坑指南如下：
+{available_skills_rich}
 """
 
 
-def get_system_prompt(include_waterfall_rules: bool = True) -> str:
+def get_system_prompt(
+    include_waterfall_rules: bool = True,
+    available_skills: List[str] = None,
+    max_mistakes_per_skill: int = 2
+) -> str:
     """
-    Get the system prompt with optional priority waterfall rules.
+    Get the system prompt with priority waterfall rules and rich skill list.
+
+    Args:
+        include_waterfall_rules: Whether to include decision priority rules
+        available_skills: List of available skill IDs. If None, uses all skills.
+        max_mistakes_per_skill: Max mistakes to show per skill
+
+    Returns:
+        Formatted system prompt string
+    """
+    # Use all skills if not specified
+    if available_skills is None:
+        available_skills = get_all_skill_ids()
+
+    # Format rich skill list
+    available_skills_rich = format_available_skills_rich(available_skills, max_mistakes_per_skill)
+
+    # Format waterfall rules
+    waterfall = PRIORITY_WATERFALL_RULES if include_waterfall_rules else ""
+
+    return SYSTEM_PROMPT_BASE.format(
+        priority_waterfall_rules=waterfall,
+        available_skills_rich=available_skills_rich
+    )
+
+
+# =============================================================================
+# Backward Compatibility - Simple system prompt for parquet generation
+# =============================================================================
+
+def get_system_prompt_for_parquet(include_waterfall_rules: bool = True) -> str:
+    """
+    Get system prompt for parquet data generation.
+
+    Uses ALL 31 skills since available_skills is determined at runtime by environment.
+    The environment will validate against actual available_skills during training.
 
     Args:
         include_waterfall_rules: Whether to include decision priority rules
 
     Returns:
-        Formatted system prompt string
+        Formatted system prompt string with all skills
     """
-    if include_waterfall_rules:
-        return SYSTEM_PROMPT_BASE.format(priority_waterfall_rules=PRIORITY_WATERFALL_RULES)
-    else:
-        return SYSTEM_PROMPT_BASE.format(priority_waterfall_rules="")
+    return get_system_prompt(
+        include_waterfall_rules=include_waterfall_rules,
+        available_skills=get_all_skill_ids(),
+        max_mistakes_per_skill=2
+    )

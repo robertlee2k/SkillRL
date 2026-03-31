@@ -55,10 +55,11 @@ logger = logging.getLogger(__name__)
 # Import shared prompt components (DRY principle - single source of truth)
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from etl.prompt_config import get_system_prompt, PRIORITY_WATERFALL_RULES
+from etl.prompt_config import get_system_prompt_for_parquet
 
 # System prompt for customer service agent (from shared config)
-SYSTEM_PROMPT = get_system_prompt(include_waterfall_rules=True)
+# Uses ALL 31 skills since available_skills is determined at runtime by environment
+SYSTEM_PROMPT = get_system_prompt_for_parquet(include_waterfall_rules=True)
 
 
 class DataPreparationReport:
