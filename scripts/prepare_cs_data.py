@@ -52,10 +52,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Import shared prompt components (DRY principle - single source of truth)
+# Import shared prompt builder (DRY principle - single source of truth)
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from etl.prompt_config import get_system_prompt
+from etl.rl_interfaces import CustomerServicePromptBuilder
 
 
 class DataPreparationReport:
@@ -375,62 +375,12 @@ def drop_last_align(
     return aligned
 
 
-def create_initial_prompt(playbook: Dict[str, Any]) -> str:
-    """
-    Create the initial prompt for a playbook episode.
-
-    IMPORTANT: This must match the format in rl_interfaces.py CustomerServicePromptBuilder
-    to ensure first turn and subsequent turns have consistent slot information.
-    """
-    scenario = playbook.get('scenario', 'unknown')
-    subtype = playbook.get('subtype', 'general')
-    nodes = playbook.get('nodes', {})
-
-    # 🔴 FIX: Merge initial_slots with root node's slot_updates
-    # Same logic as customer_service_env.py reset()
-    initial_slots = playbook.get('initial_slots', {}).copy()
-    root_node = nodes.get('root', {})
-    root_slot_updates = root_node.get('slot_updates', {})
-    # Merge: root slot_updates takes precedence
-    merged_slots = {**initial_slots, **root_slot_updates}
-
-    # Get root node buyer text
-    buyer_text = root_node.get('buyer_text', '')
-
-    scenario_desc = {
-        'presale': '售前咨询',
-        'logistics': '物流查询',
-        'aftersale': '售后服务',
-        'unknown': '客服咨询'
-    }.get(scenario, '客服咨询')
-
-    # 🔴 新增：格式化槽位信息（与 rl_interfaces.py 保持完全一致）
-    if merged_slots:
-        slots_formatted = "\n".join([
-            f"- {k}: {v}" for k, v in merged_slots.items()
-        ])
-    else:
-        slots_formatted = "（暂无槽位信息）"
-
-    prompt = f"""## 场景信息
-场景类型: {scenario_desc} ({scenario})
-子类型: {subtype}
-
-## 当前槽位状态
-{slots_formatted}
-
-## 买家消息
-{buyer_text}
-
-## 任务
-请分析买家的需求，并结合系统提供的可用动作列表与约束规则，选择最合适的唯一客服动作 ID。"""
-
-    return prompt
-
-
 def playbook_to_record(playbook: Dict[str, Any], idx: int) -> Dict[str, Any]:
     """
     Convert a playbook to a training record.
+
+    Uses CustomerServicePromptBuilder.build_initial_messages() to ensure
+    identical format between parquet data and runtime environment.
     """
     playbook_id = playbook.get('playbook_id', f'unknown_{idx}')
     scenario = playbook.get('scenario', 'unknown')
@@ -440,26 +390,12 @@ def playbook_to_record(playbook: Dict[str, Any], idx: int) -> Dict[str, Any]:
     rl_steps = playbook.get('rl_steps')
     effective_turn_count = playbook.get('effective_turn_count')
 
-    # 🔴 FIX: Get root node's available_skills for System Prompt
-    # This ensures first turn uses same logic as subsequent turns
-    nodes = playbook.get('nodes', {})
-    root_node = nodes.get('root', {})
-    root_available_skills = root_node.get('available_skills', [])
-
-    # Generate system prompt with ONLY root's available skills (not all 31)
-    system_prompt = get_system_prompt(
-        include_waterfall_rules=True,
-        available_skills=root_available_skills
-    )
-
-    initial_prompt = create_initial_prompt(playbook)
+    # Use unified prompt builder (DRY principle - single source of truth)
+    prompt_messages = CustomerServicePromptBuilder.build_initial_messages(playbook)
 
     record = {
         'data_source': 'customer_service',
-        'prompt': [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': initial_prompt}
-        ],
+        'prompt': prompt_messages,
         'ability': 'agent',
         'extra_info': {
             'playbook_id': playbook_id,

@@ -13,13 +13,12 @@
 # limitations under the License.
 
 """
-Shared Prompt Configuration for Customer Service Agent.
+Shared Prompt Utilities for Customer Service Agent.
 
-This module provides centralized prompt components that are reused by:
-1. etl/rl_interfaces.py - Runtime prompt generation during training
-2. scripts/prepare_cs_data.py - Offline training data preparation
+This module provides ONLY utility functions for prompt generation.
+The actual prompt assembly is centralized in rl_interfaces.py CustomerServicePromptBuilder.
 
-This ensures DRY (Don't Repeat Yourself) principle and prevents desync.
+DRY Principle: Single source of truth for prompt generation.
 """
 
 import os
@@ -85,14 +84,14 @@ PRIORITY_WATERFALL_RULES = """
 【🔴 动作决策全局瀑布流准则（严格遵守） 🔴】
 作为客服，你每轮只能输出唯一的动作ID。面对买家输入，你必须按以下优先级从上到下匹配，一旦命中立即输出，禁止降级：
 
-- [优先级 1 - 核心业务]：若买家表达了具体的业务诉求（如问参数、查物流、退换货等），必须直接选择对应的业务动作（如 pre_answer_spec, log_query_status）。系统底层会自动为你对用户补齐问候或安抚话术，你只需输出业务 Action。
-- [优先级 2 - 信息收集]：若买家有业务诉求倾向，但意图模糊或缺失关键信息（如只发了一个链接），才能降级选择 gen_clarify 或 gen_verify_order。
-- [优先级 3 - 纯社交兜底]：**只有当**买家输入纯问候（如"你好"、"在吗"）或纯发泄情绪，且**完全没有包含任何业务诉求时**，才可降级选择 gen_greet 或 gen_empathize。
+- [优先级 1 - 核心业务]：若买家表达了具体的业务诉求（如问参数、查物流、退换货等），必须直接选择对应的业务动作。系统底层会自动为你对用户补齐问候或安抚话术，你只需输出业务 Action。
+- [优先级 2 - 信息收集]：若买家有业务诉求倾向，但意图模糊或缺失关键信息（如只发了一个链接），才能降级选择澄清或核实订单类动作。
+- [优先级 3 - 纯社交兜底]：**只有当**买家输入纯问候（如"你好"、"在吗"）或纯发泄情绪，且**完全没有包含任何业务诉求时**，才可降级选择问候或安抚类动作。
 """
 
 
 # =============================================================================
-# Rich Skill Formatting
+# Rich Skill Formatting Utilities
 # =============================================================================
 
 def format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any], max_mistakes: int = 2) -> str:
@@ -150,83 +149,22 @@ def format_available_skills_rich(available_skills: List[str], max_mistakes_per_s
     return "\n\n".join(formatted_lines)
 
 
+def format_slots(slots: Dict[str, Any]) -> str:
+    """
+    Format slots dict into readable string.
+
+    Args:
+        slots: Dict of slot key-value pairs
+
+    Returns:
+        Formatted slots string
+    """
+    if slots:
+        return "\n".join([f"- {k}: {v}" for k, v in slots.items()])
+    else:
+        return "（暂无槽位信息）"
+
+
 def get_all_skill_ids() -> List[str]:
     """Get all skill IDs from SKILL_DICT."""
     return list(SKILL_DICT.keys())
-
-
-# =============================================================================
-# System Prompt Base (Dynamic - uses rich skill format)
-# =============================================================================
-
-SYSTEM_PROMPT_BASE = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
-你的目标是高效解决买家问题，促成交易或妥善处理售后，同时避免激怒买家。
-
-{priority_waterfall_rules}
-
-你需要在每一步选择正确的服务动作。你的输出格式必须是：
-
-<think>
-在这里写下你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？
-</think>
-<action>skill_id</action>
-
-当前节点可用的动作及避坑指南如下：
-{available_skills_rich}
-"""
-
-
-def get_system_prompt(
-    include_waterfall_rules: bool = True,
-    available_skills: List[str] = None,
-    max_mistakes_per_skill: int = 2
-) -> str:
-    """
-    Get the system prompt with priority waterfall rules and rich skill list.
-
-    Args:
-        include_waterfall_rules: Whether to include decision priority rules
-        available_skills: List of available skill IDs. If None, uses all skills.
-        max_mistakes_per_skill: Max mistakes to show per skill
-
-    Returns:
-        Formatted system prompt string
-    """
-    # Use all skills if not specified
-    if available_skills is None:
-        available_skills = get_all_skill_ids()
-
-    # Format rich skill list
-    available_skills_rich = format_available_skills_rich(available_skills, max_mistakes_per_skill)
-
-    # Format waterfall rules
-    waterfall = PRIORITY_WATERFALL_RULES if include_waterfall_rules else ""
-
-    return SYSTEM_PROMPT_BASE.format(
-        priority_waterfall_rules=waterfall,
-        available_skills_rich=available_skills_rich
-    )
-
-
-# =============================================================================
-# Backward Compatibility - Simple system prompt for parquet generation
-# =============================================================================
-
-def get_system_prompt_for_parquet(include_waterfall_rules: bool = True) -> str:
-    """
-    Get system prompt for parquet data generation.
-
-    Uses ALL 31 skills since available_skills is determined at runtime by environment.
-    The environment will validate against actual available_skills during training.
-
-    Args:
-        include_waterfall_rules: Whether to include decision priority rules
-
-    Returns:
-        Formatted system prompt string with all skills
-    """
-    return get_system_prompt(
-        include_waterfall_rules=include_waterfall_rules,
-        available_skills=get_all_skill_ids(),
-        max_mistakes_per_skill=2
-    )

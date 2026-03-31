@@ -36,10 +36,11 @@ from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 # Import customer service environment and skill definitions
 from etl.customer_service_env import VALID_SKILLS, HIGH_RISK_SKILLS
 
-# Import shared prompt components (DRY principle)
+# Import shared prompt utilities (DRY principle - single source of truth)
 from etl.prompt_config import (
     PRIORITY_WATERFALL_RULES,
     format_available_skills_rich,
+    format_slots,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,91 +57,6 @@ FALLBACK_ACTION_PRIORITY = ["gen_clarify", "gen_empathize", "gen_transfer"]
 SKILL_ID_TO_IDX: Dict[str, int] = {skill: i for i, skill in enumerate(sorted(VALID_SKILLS))}
 IDX_TO_SKILL_ID: Dict[int, str] = {i: skill for skill, i in SKILL_ID_TO_IDX.items()}
 
-
-# =============================================================================
-# Prompt Templates
-# =============================================================================
-
-CUSTOMER_SERVICE_TEMPLATE_NO_HIS = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
-
-{priority_waterfall_rules}
-
-## 当前对话状态
-
-**场景类型**: {scenario}
-**买家情绪**: {sentiment}
-
-**买家最新消息**:
-{buyer_text}
-
-**当前槽位状态**:
-{slots_formatted}
-
-## 可用动作列表及避坑指南
-
-以下是你当前可以选择的动作：
-
-{available_skills_formatted}
-
-## 输出格式要求
-
-你**必须**严格按照以下 XML 格式输出，先写思考过程，最后输出动作 ID：
-
-<think>
-在这里写下你的分析过程。
-</think>
-<action>这里填写对应的动作ID</action>
-
-【标准输出示例】：
-<think>
-买家正在询问这款奶瓶是否带有把手，属于售前关于产品规格的咨询。此时应该选择回答规格问题的动作。
-</think>
-<action>pre_answer_spec</action>
-"""
-
-CUSTOMER_SERVICE_TEMPLATE = """你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。你的任务是: {task_description}
-
-{priority_waterfall_rules}
-
-## 历史对话记录
-
-在当前步骤之前，你已经执行了 {step_count} 步操作。以下是最近的 {history_length} 条对话和操作记录：
-
-{action_history}
-
-## 当前对话状态
-
-**场景类型**: {scenario}
-**当前步骤**: {current_step}
-**买家情绪**: {sentiment}
-
-**买家最新消息**:
-{buyer_text}
-
-**当前槽位状态**:
-{slots_formatted}
-
-## 可用动作列表及避坑指南
-
-以下是你当前可以选择的动作：
-
-{available_skills_formatted}
-
-## 输出格式要求
-
-你**必须**严格按照以下 XML 格式输出，先写思考过程，最后输出动作 ID：
-
-<think>
-在这里写下你的分析过程。
-</think>
-<action>这里填写对应的动作ID</action>
-
-【标准输出示例】：
-<think>
-买家正在询问这款奶瓶是否带有把手，属于售前关于产品规格的咨询。此时应该选择回答规格问题的动作。
-</think>
-<action>pre_answer_spec</action>
-"""
 
 
 # =============================================================================
@@ -374,11 +290,174 @@ def _select_fallback_action(available_skills: List[str]) -> str:
 
 
 # =============================================================================
-# Prompt Builder
+# Prompt Builder (Single Source of Truth)
 # =============================================================================
 
 class CustomerServicePromptBuilder:
-    """Build prompts for customer service environment."""
+    """
+    Build prompts for customer service environment.
+
+    This is the SINGLE SOURCE OF TRUTH for all prompt generation.
+    Both parquet data generation and runtime environment use this class.
+
+    DRY Principle: All prompt format decisions live here.
+    """
+
+    # =============================================================================
+    # Internal Template Fragments (Private)
+    # =============================================================================
+
+    @staticmethod
+    def _build_system_prompt_content(available_skills: List[str]) -> str:
+        """
+        Build system prompt content with waterfall rules and available skills.
+
+        Args:
+            available_skills: List of skill IDs available at current node
+
+        Returns:
+            Formatted system prompt content string
+        """
+        available_skills_formatted = format_available_skills_rich(available_skills)
+
+        return f"""你是一名专业的电商客服智能助手，擅长处理售前咨询、物流查询和售后问题。
+你的目标是高效解决买家问题，促成交易或妥善处理售后，同时避免激怒买家。
+
+{PRIORITY_WATERFALL_RULES}
+
+你需要在每一步选择正确的服务动作。你的输出格式必须是：
+
+<tool_call>
+[你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
+<?/
+<action>skill_id</action>
+
+当前节点可用的动作及避坑指南如下：
+{available_skills_formatted}
+"""
+
+    @staticmethod
+    def _build_user_prompt_content(
+        scenario: str,
+        slots: Dict[str, Any],
+        buyer_text: str,
+        dialogue_history: Optional[List[Dict]] = None,
+        action_history: Optional[List[str]] = None,
+        history_length: int = 5
+    ) -> str:
+        """
+        Build user prompt content with scenario info and buyer message.
+
+        Args:
+            scenario: Scenario type (presale/aftersale/logistics)
+            slots: Current slot values
+            buyer_text: Latest buyer message
+            dialogue_history: List of dialogue turns
+            action_history: List of previous actions
+            history_length: Number of recent turns to include
+
+        Returns:
+            Formatted user prompt content string
+        """
+        scenario_desc = {
+            'presale': '售前咨询',
+            'logistics': '物流查询',
+            'aftersale': '售后服务',
+            'unknown': '客服咨询'
+        }.get(scenario, '客服咨询')
+
+        slots_formatted = format_slots(slots)
+
+        # Build dialogue history section if available
+        history_section = ""
+        if dialogue_history and len(dialogue_history) > 0:
+            recent_dialogue = dialogue_history[-(history_length * 2):]
+            dialogue_lines = []
+            for turn in recent_dialogue:
+                if turn['role'] == 'buyer':
+                    dialogue_lines.append(f"买家: {turn['content']}")
+                elif turn['role'] == 'system':
+                    dialogue_lines.append(f"【系统警告】: {turn['content']}")
+                else:
+                    action_str = turn.get('action', 'N/A')
+                    if action_str == 'INVALID_ACTION':
+                        dialogue_lines.append(f"客服: [尝试了无效的动作]")
+                    else:
+                        dialogue_lines.append(f"客服: [Action: {action_str}]")
+            dialogue_text = "\n".join(dialogue_lines)
+            action_len = len(action_history) if action_history else 0
+            history_section = f"""
+## 历史对话记录
+
+在当前步骤之前，你已经执行了 {action_len} 步操作。以下是最近的 {min(history_length, len(dialogue_history) // 2)} 条对话和操作记录：
+
+{dialogue_text}
+"""
+
+        return f"""{history_section}## 当前对话状态
+
+**场景类型**: {scenario}
+**买家情绪**: neutral
+
+**买家最新消息**:
+{buyer_text}
+
+**当前槽位状态**:
+{slots_formatted}
+
+## 任务
+请分析买家的需求，并结合系统提供的可用动作列表与约束规则，选择最合适的唯一客服动作 ID。"""
+
+    # =============================================================================
+    # Public API - For Parquet Data Generation
+    # =============================================================================
+
+    @staticmethod
+    def build_initial_messages(playbook: Dict[str, Any]) -> List[Dict[str, str]]:
+        """
+        Build initial prompt messages for parquet data generation.
+
+        This is used by prepare_cs_data.py to generate training data.
+        Format is IDENTICAL to runtime build() method.
+
+        Args:
+            playbook: Playbook dict containing:
+                - scenario: Scenario type
+                - nodes: Dict with 'root' node containing buyer_text, available_skills, slot_updates
+                - initial_slots: Initial slot values (usually empty)
+
+        Returns:
+            List of message dicts: [{'role': 'system', 'content': ...}, {'role': 'user', 'content': ...}]
+        """
+        scenario = playbook.get('scenario', 'unknown')
+        nodes = playbook.get('nodes', {})
+        root_node = nodes.get('root', {})
+
+        # Extract root node data
+        buyer_text = root_node.get('buyer_text', '')
+        available_skills = root_node.get('available_skills', [])
+
+        # Merge initial_slots with root slot_updates (same logic as CustomerServiceEnv.reset())
+        initial_slots = playbook.get('initial_slots', {}).copy()
+        root_slot_updates = root_node.get('slot_updates', {})
+        merged_slots = {**initial_slots, **root_slot_updates}
+
+        # Build messages
+        system_content = CustomerServicePromptBuilder._build_system_prompt_content(available_skills)
+        user_content = CustomerServicePromptBuilder._build_user_prompt_content(
+            scenario=scenario,
+            slots=merged_slots,
+            buyer_text=buyer_text
+        )
+
+        return [
+            {'role': 'system', 'content': system_content},
+            {'role': 'user', 'content': user_content}
+        ]
+
+    # =============================================================================
+    # Public API - For Runtime Environment
+    # =============================================================================
 
     @staticmethod
     def build(
@@ -387,7 +466,10 @@ class CustomerServicePromptBuilder:
         history_length: int = 5
     ) -> str:
         """
-        Build a prompt from environment observation.
+        Build a complete prompt from environment observation.
+
+        This is used by CustomerServiceEnvironmentManager at runtime.
+        Format is IDENTICAL to build_initial_messages() output.
 
         Args:
             observation: Observation dict from CustomerServiceEnv
@@ -395,76 +477,28 @@ class CustomerServicePromptBuilder:
             history_length: Number of recent dialogue turns to include
 
         Returns:
-            Formatted prompt string
+            Formatted prompt string (system + user combined for backward compatibility)
         """
         scenario = observation.get("scenario", "unknown")
         buyer_text = observation.get("buyer_text", "")
-        sentiment = observation.get("sentiment", "neutral")
         available_skills = observation.get("available_skills", list(VALID_SKILLS))
         slots = observation.get("slots", {})
         dialogue_history = observation.get("dialogue_history", [])
         action_history = observation.get("action_history", [])
 
-        # Format available skills with rich information (including common_mistakes)
-        # NOTE: node_id is NOT exposed to prevent cheating - only skill_name is shown
-        available_skills_formatted = format_available_skills_rich(available_skills)
+        # Build using same internal methods as build_initial_messages
+        system_content = CustomerServicePromptBuilder._build_system_prompt_content(available_skills)
+        user_content = CustomerServicePromptBuilder._build_user_prompt_content(
+            scenario=scenario,
+            slots=slots,
+            buyer_text=buyer_text,
+            dialogue_history=dialogue_history,
+            action_history=action_history,
+            history_length=history_length
+        )
 
-        # Format slots
-        if slots:
-            slots_formatted = "\n".join([
-                f"- {k}: {v}" for k, v in slots.items()
-            ])
-        else:
-            slots_formatted = "（暂无槽位信息）"
-
-        # Format dialogue history (full conversation for context)
-        if dialogue_history and len(dialogue_history) > 0:
-            # Take last N turns
-            recent_dialogue = dialogue_history[-(history_length * 2):]
-            dialogue_lines = []
-            for turn in recent_dialogue:
-                if turn['role'] == 'buyer':
-                    dialogue_lines.append(f"买家: {turn['content']}")
-                elif turn['role'] == 'system':
-                    # 【修复1】正确剥离系统警告，不污染客服角色
-                    dialogue_lines.append(f"【系统警告】: {turn['content']}")
-                else:
-                    # 【修复2】优雅处理非法动作的展示
-                    action_str = turn.get('action', 'N/A')
-                    if action_str == 'INVALID_ACTION':
-                        dialogue_lines.append(f"客服: [尝试了无效的动作]")
-                    else:
-                        dialogue_lines.append(f"客服: [Action: {action_str}]")
-            dialogue_text = "\n".join(dialogue_lines)
-
-            action_len = len(action_history) if action_history else 0
-            return CUSTOMER_SERVICE_TEMPLATE.format(
-                task_description=f"处理{scenario}场景下的客户问题",
-                priority_waterfall_rules=PRIORITY_WATERFALL_RULES,
-                step_count=action_len,
-                history_length=min(history_length, len(dialogue_history) // 2),
-                action_history=dialogue_text,
-                scenario=scenario,
-                current_step=action_len + 1,
-                sentiment=sentiment,
-                buyer_text=buyer_text,
-                slots_formatted=slots_formatted,
-                available_skills_formatted=available_skills_formatted,
-            )
-        else:
-            return CUSTOMER_SERVICE_TEMPLATE_NO_HIS.format(
-                priority_waterfall_rules=PRIORITY_WATERFALL_RULES,
-                scenario=scenario,
-                sentiment=sentiment,
-                buyer_text=buyer_text,
-                slots_formatted=slots_formatted,
-                available_skills_formatted=available_skills_formatted,
-            )
-
-
-# =============================================================================
-# Environment Manager
-# =============================================================================
+        # Return combined prompt for backward compatibility
+        return f"{system_content}\n\n{user_content}"
 
 class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
     """
