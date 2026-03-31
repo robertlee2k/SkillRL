@@ -327,9 +327,9 @@ class CustomerServicePromptBuilder:
 
 你需要在每一步选择正确的服务动作。你的输出格式必须是：
 
-<tool_call>
+<think>
 [你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
-<?/
+</think>
 <action>skill_id</action>
 
 当前节点可用的动作及避坑指南如下：
