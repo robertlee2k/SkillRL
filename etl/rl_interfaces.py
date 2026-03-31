@@ -332,7 +332,7 @@ class CustomerServicePromptBuilder:
 </think>
 <action>在此填写最终选择的动作英文名称</action>
 
-注意：动作名称必须、且只能从下方【当前场景可用的动作】列表中，选择对应的skill_name（格式为纯英文名称，例如：gen_greet ）。
+注意：动作名称必须、且只能从下方【当前节点可用的动作】列表中，选择对应的skill_name（格式为纯英文名称，例如：gen_greet ，严禁捏造不在列表中的名称）。
 
 当前节点可用的动作及避坑指南如下：
 {available_skills_formatted}
