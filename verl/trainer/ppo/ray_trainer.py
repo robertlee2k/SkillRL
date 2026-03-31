@@ -1050,6 +1050,7 @@ class RayPPOTrainer:
         Extract the actual user query from the first user turn.
 
         For CustomerService, this extracts the buyer message and scenario info.
+        Supports multiple prompt formats: ChatML, simple system/user, Human/Assistant.
         """
         import re
 
@@ -1068,6 +1069,24 @@ class RayPPOTrainer:
             )
             if buyer_match:
                 return buyer_match.group(1).strip()[:500]
+            return user_content[:500]
+
+        # Simple format: "system\n...\nuser\n...\nassistant\n..."
+        # This is the actual format being used in CustomerService prompts
+        simple_user_match = re.search(
+            r'\nuser\n(.*?)(?=\nassistant\n|$)',
+            inp, re.DOTALL
+        )
+        if simple_user_match:
+            user_content = simple_user_match.group(1).strip()
+            # Try to extract the buyer message specifically
+            buyer_match = re.search(
+                r'## 买家消息\s*\n(.*?)(?=\n##|$)',
+                user_content, re.DOTALL
+            )
+            if buyer_match:
+                return buyer_match.group(1).strip()[:500]
+            # Fallback: return the whole user turn content (truncated)
             return user_content[:500]
 
         # Human/Assistant format
