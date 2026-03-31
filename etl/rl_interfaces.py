@@ -332,7 +332,7 @@ class CustomerServicePromptBuilder:
 </think>
 <action>在此填写最终选择的动作英文名称</action>
 
-注意：动作名称必须、且只能从下方【当前节点可用的动作】列表中，选择对应的skill_name（格式为纯英文名称，例如：gen_greet ，严禁捏造不在列表中的名称）。
+【⚠️ 格式警告 ⚠️】你的动作必须、且只能从下方的技能列表中，准确复制【动作英文名称】后面的纯英文拼写。
 
 当前节点可用的动作及避坑指南如下：
 {available_skills_formatted}
@@ -408,7 +408,7 @@ class CustomerServicePromptBuilder:
 {slots_formatted}
 
 ## 任务
-请分析买家的需求，并结合系统提供的可用动作列表与约束规则，选择最合适的唯一客服动作 ID。"""
+请分析买家的需求，并结合系统提供的可用动作列表与约束规则，选择最合适的唯一客服【动作英文名称】。"""
 
     # =============================================================================
     # Public API - For Parquet Data Generation

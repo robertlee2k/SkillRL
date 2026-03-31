@@ -128,7 +128,7 @@ def format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any]) -> s
         if mistakes_lines:
             mistakes_formatted = "\n  " + "\n  ".join(mistakes_lines)
 
-    return f"**{skill_name}**: {title}\n  用途: {principle}\n  适用时机: {when_to_apply}{mistakes_formatted}"
+    return f"【动作英文名称】: {skill_name}\n  功能说明: {title}\n  用途: {principle}\n  适用时机: {when_to_apply}{mistakes_formatted}"
 
 
 def format_available_skills_rich(available_skills: List[str]) -> str:
