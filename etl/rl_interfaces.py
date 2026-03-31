@@ -330,7 +330,9 @@ class CustomerServicePromptBuilder:
 <think>
 [你的分析过程：买家想要什么？当前对话处于什么阶段？哪个动作最合适？]
 </think>
-<action>skill_id</action>
+<action>在此处填写你最终选择的动作ID</action>
+
+注意：你的动作 ID 必须、且只能从下方【当前节点可用的动作及避坑指南】中，选择对应的纯英文动作 ID（例如：gen_greet 这样的格式）。
 
 当前节点可用的动作及避坑指南如下：
 {available_skills_formatted}
