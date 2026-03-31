@@ -102,12 +102,20 @@ class CustomerServiceEnv:
         else:
             self.current_playbook = random.choice(self.playbooks)
 
+        # 🔴 FIX: Merge initial_slots with root node's slot_updates
+        # The root node's slot_updates contains order info extracted by LLM from buyer_text
+        initial_slots = self.current_playbook.get('initial_slots', {}).copy()
+        root_node = self.current_playbook.get('nodes', {}).get('root', {})
+        root_slot_updates = root_node.get('slot_updates', {})
+        # Merge: root slot_updates takes precedence
+        merged_slots = {**initial_slots, **root_slot_updates}
+
         self.state = EnvState(
             current_node='root',
             action_history=[],
             dialogue_history=[],
             visited_nodes=['root'],
-            slots=self.current_playbook.get('initial_slots', {}).copy(),
+            slots=merged_slots,
             done=False,
             won=False,
             fell_back=False,
