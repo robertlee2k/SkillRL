@@ -427,10 +427,7 @@ def create_initial_prompt(playbook: Dict[str, Any]) -> str:
 {buyer_text}
 
 ## 任务
-请分析买家的需求，并选择合适的客服动作进行回应。记住：
-1. 如果买家情绪不好（angry），优先安抚情绪
-2. 选择正确的动作推进对话
-3. 避免触发不必要的 fallback"""
+请分析买家的需求，并结合系统提供的可用动作列表与约束规则，选择最合适的唯一客服动作 ID。"""
 
     return prompt
 
