@@ -94,57 +94,59 @@ PRIORITY_WATERFALL_RULES = """
 # Rich Skill Formatting Utilities
 # =============================================================================
 
-def format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any], max_mistakes: int = 2) -> str:
+def format_skill_with_mistakes(skill_name: str, skill_info: Dict[str, Any]) -> str:
     """
     Format a skill with rich information including common mistakes.
 
+    IMPORTANT: NO truncation, NO limit on mistakes count.
+    Full content must be preserved.
+
     Args:
         skill_name: The skill ID (e.g., 'gen_clarify')
-        skill_info: Skill info from SKILL_DICT containing title, principle, common_mistakes
-        max_mistakes: Maximum number of mistakes to include (default 2)
+        skill_info: Skill info from SKILL_DICT containing title, principle, when_to_apply, common_mistakes
 
     Returns:
-        Formatted skill description string
+        Formatted skill description string with ALL mistakes included
     """
     if not skill_info:
         return f"**{skill_name}**"
 
     title = skill_info.get('title', skill_name)
     principle = skill_info.get('principle', '')
+    when_to_apply = skill_info.get('when_to_apply', '')
 
     mistakes = skill_info.get('common_mistakes', [])
     mistakes_formatted = ""
     if mistakes:
         mistakes_lines = []
-        for m in mistakes[:max_mistakes]:
+        for m in mistakes:  # 全量遍历，不限制数量
             trigger = m.get('trigger_condition', '')
             avoid = m.get('how_to_avoid', '')
             if trigger and avoid:
-                # Truncate for readability
-                trigger_short = trigger[:120] + "..." if len(trigger) > 120 else trigger
-                avoid_short = avoid[:100] + "..." if len(avoid) > 100 else avoid
-                mistakes_lines.append(f"    ⚠️ 误触发场景: {trigger_short}\n    ✓ 正确做法: {avoid_short}")
+                # 完整输出，不截断
+                mistakes_lines.append(f"    ⚠️ 误触发场景: {trigger}\n    ✓ 正确做法: {avoid}")
         if mistakes_lines:
             mistakes_formatted = "\n  " + "\n  ".join(mistakes_lines)
 
-    return f"**{skill_name}**: {title}\n  用途: {principle}{mistakes_formatted}"
+    return f"**{skill_name}**: {title}\n  用途: {principle}\n  适用时机: {when_to_apply}{mistakes_formatted}"
 
 
-def format_available_skills_rich(available_skills: List[str], max_mistakes_per_skill: int = 2) -> str:
+def format_available_skills_rich(available_skills: List[str]) -> str:
     """
     Format available skills list with rich information from SKILL_DICT.
 
+    IMPORTANT: All mistakes are included, no limits.
+
     Args:
         available_skills: List of skill IDs available at current node
-        max_mistakes_per_skill: Max mistakes to show per skill
 
     Returns:
-        Formatted skills section string
+        Formatted skills section string with ALL mistakes per skill
     """
     formatted_lines = []
     for skill in available_skills:
         skill_info = SKILL_DICT.get(skill, {})
-        formatted_lines.append(format_skill_with_mistakes(skill, skill_info, max_mistakes_per_skill))
+        formatted_lines.append(format_skill_with_mistakes(skill, skill_info))
 
     return "\n\n".join(formatted_lines)
 
