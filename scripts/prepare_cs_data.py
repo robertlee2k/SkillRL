@@ -397,6 +397,9 @@ def playbook_to_record(playbook: Dict[str, Any], idx: int) -> Dict[str, Any]:
         'data_source': 'customer_service',
         'prompt': prompt_messages,
         'ability': 'agent',
+        'env_kwargs': {
+            'playbook_id': playbook_id,
+        },
         'extra_info': {
             'playbook_id': playbook_id,
             'session_id': session_id,
