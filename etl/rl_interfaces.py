@@ -24,7 +24,7 @@ It follows the patterns established in agent_system.environments.base and
 agent_system.environments.env_manager.
 """
 
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Union
 import re
 import logging
 import numpy as np
@@ -537,19 +537,30 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
 
         super().__init__(envs, projection_f, config)
 
-    def reset(self, kwargs: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    def reset(self, kwargs: Optional[Union[Dict[str, Any], np.ndarray]] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Reset all environments and return initial observations.
 
         Args:
-            kwargs: Optional reset parameters (e.g., specific playbook_ids)
+            kwargs: Optional reset parameters - can be:
+                - None: no specific parameters
+                - Dict: single set of parameters for all envs
+                - np.ndarray: array of dicts, one per environment (e.g., playbook_ids)
 
         Returns:
             Tuple of:
                 - observations: Dict with 'text', 'image', 'anchor' keys
                 - infos: List of info dicts from environment reset
         """
-        kwargs = kwargs or {}
+        # Handle different kwargs formats
+        if kwargs is None:
+            kwargs_list = None
+        elif isinstance(kwargs, np.ndarray):
+            # kwargs is an array of dicts, one per environment
+            kwargs_list = list(kwargs)
+        else:
+            # kwargs is a single dict, use for all environments
+            kwargs_list = [kwargs] if kwargs else None
 
         # Initialize tracking state
         self._last_infos: List[Dict[str, Any]] = []
@@ -560,13 +571,16 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
         # This ensures CustomerServiceEnv.state is properly initialized
         if hasattr(self.envs, 'envs'):
             # SimpleVectorEnv wrapper with .envs attribute
-            for env in self.envs.envs:
-                obs, info = env.reset()
+            for i, env in enumerate(self.envs.envs):
+                env_kwargs = kwargs_list[i] if kwargs_list else None
+                playbook_id = env_kwargs.get('playbook_id') if env_kwargs else None
+                obs, info = env.reset(playbook_id=playbook_id)
                 obs_list.append(obs)
                 infos.append(info)
         elif hasattr(self.envs, 'reset'):
             # Single environment or other vectorized env
-            base_obs, base_infos = self.envs.reset(**kwargs)
+            env_kwargs = kwargs_list[0] if kwargs_list else None
+            base_obs, base_infos = self.envs.reset(**(env_kwargs or {}))
 
             # Normalize to list format
             if isinstance(base_obs, list):

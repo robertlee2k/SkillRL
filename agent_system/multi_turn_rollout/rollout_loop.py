@@ -23,7 +23,7 @@ from transformers import PreTrainedTokenizer
 import uuid
 from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
 from agent_system.environments import EnvironmentManagerBase
-from typing import List, Dict
+from typing import List, Dict, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
 class TrajectoryCollector:
@@ -238,6 +238,7 @@ class TrajectoryCollector:
             success: Dict[str, np.ndarray],
             traj_uid: np.ndarray,
             tool_callings: np.ndarray,
+            env_kwargs: Optional[np.ndarray] = None,
             ) -> DataProto:
         """
         Collect and organize trajectory data, handling batch size adjustments to meet parallel training requirements.
@@ -257,9 +258,12 @@ class TrajectoryCollector:
         success_rate = {}
         for key, value in success.items():
             success_rate[key] = np.mean(value)
-        
+
         effective_batch = []
+        expanded_env_kwargs = []  # Expanded to match effective_batch length
         for bs in range(batch_size):
+            # Get env_kwargs for this trajectory
+            traj_env_kwargs = env_kwargs[bs] if env_kwargs is not None and bs < len(env_kwargs) else {}
             # sum the rewards for each data in total_batch_list[bs]
             for data in total_batch_list[bs]:
                 assert traj_uid[bs] == data['traj_uid'], "data is not from the same trajectory"
@@ -275,11 +279,17 @@ class TrajectoryCollector:
                         data[key] = value
 
                     effective_batch.append(data)
+                    expanded_env_kwargs.append(traj_env_kwargs)
             
         # Convert trajectory data to DataProto format
         gen_batch_output = DataProto.from_single_dict(
             data=collate_fn(effective_batch)
         )
+
+        # Add env_kwargs to non_tensor_batch for bad case tracking
+        if expanded_env_kwargs:
+            gen_batch_output.non_tensor_batch['env_kwargs'] = np.array(expanded_env_kwargs, dtype=object)
+
         return gen_batch_output
 
     def vanilla_multi_turn_loop(
@@ -502,7 +512,13 @@ class TrajectoryCollector:
         """
         if is_train:
             gen_batch = gen_batch.repeat(repeat_times=self.config.env.rollout.n, interleave=True)
-            
+
+        # Save env_kwargs before it's popped in vanilla_multi_turn_loop
+        # This is needed to track playbook_id for bad case analysis
+        saved_env_kwargs = gen_batch.non_tensor_batch.get('env_kwargs', None)
+        if saved_env_kwargs is not None:
+            saved_env_kwargs = saved_env_kwargs.copy()
+
         # Initial observations from the environment
         if self.config.algorithm.filter_groups.enable and is_train:
             # Dynamic Sampling (for DAPO and Dynamic GiGPO)
@@ -534,6 +550,7 @@ class TrajectoryCollector:
             success=total_success,
             traj_uid=total_traj_uid,
             tool_callings=totoal_tool_callings,
+            env_kwargs=saved_env_kwargs,
         )
         
         return gen_batch_output
