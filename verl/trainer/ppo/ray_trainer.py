@@ -693,6 +693,9 @@ class RayPPOTrainer:
         tool_calling_list = []
         traj_uid_list = []
         env_kwargs_list = []  # NEW: collect env_kwargs for playbook_id
+        step_info_list = []  # NEW: collect step_info for each step
+        text_action_list = []  # NEW: collect text_action for each step
+        dialogue_history_list = []  # NEW: collect dialogue_history for each step
         success_rate_dict = {}
 
         # Lists to collect samples for the table
@@ -775,6 +778,13 @@ class RayPPOTrainer:
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
             env_kwargs_list.append(test_batch.non_tensor_batch.get('env_kwargs', [{}] * reward_tensor.shape[0]))  # NEW
+            # NEW: collect step-level info for bad case analysis
+            if 'step_info' in test_output_gen_batch.non_tensor_batch:
+                step_info_list.append(test_output_gen_batch.non_tensor_batch['step_info'])
+            if 'text_action' in test_output_gen_batch.non_tensor_batch:
+                text_action_list.append(test_output_gen_batch.non_tensor_batch['text_action'])
+            if 'dialogue_history' in test_output_gen_batch.non_tensor_batch:
+                dialogue_history_list.append(test_output_gen_batch.non_tensor_batch['dialogue_history'])
             # success rate
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
@@ -793,6 +803,11 @@ class RayPPOTrainer:
         traj_uids = np.concatenate(traj_uid_list, axis=0)
         env_kwargs = np.concatenate(env_kwargs_list, axis=0)  # NEW: concatenate env_kwargs
         success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
+
+        # NEW: concatenate step-level info
+        step_infos = np.concatenate(step_info_list, axis=0) if step_info_list else None
+        text_actions = np.concatenate(text_action_list, axis=0) if text_action_list else None
+        dialogue_histories = np.concatenate(dialogue_history_list, axis=0) if dialogue_history_list else None
 
         # evaluate test_score based on data source
         data_source_reward = {}
@@ -837,6 +852,9 @@ class RayPPOTrainer:
                 data_sources=data_sources,
                 traj_uids=traj_uids,
                 env_kwargs=env_kwargs,
+                step_infos=step_infos,
+                text_actions=text_actions,
+                dialogue_histories=dialogue_histories,
             )
 
         # === Skill Bank 动态更新 ===
@@ -859,40 +877,150 @@ class RayPPOTrainer:
         data_sources: 'np.ndarray | None' = None,
         traj_uids: 'np.ndarray | None' = None,
         env_kwargs: 'np.ndarray | None' = None,
+        step_infos: 'np.ndarray | None' = None,
+        text_actions: 'np.ndarray | None' = None,
+        dialogue_histories: 'np.ndarray | None' = None,
     ):
-        """Save bad cases (failures) to a JSON file for analysis."""
+        """
+        Save bad cases (failures) to a JSON file for analysis.
+
+        Output format matches evolve_skills.py expectations:
+        {
+            'bad_cases': [
+                {
+                    'playbook_id': str,
+                    'scenario': str,
+                    'dialogue_history': [...],
+                    'error_actions': [
+                        {
+                            'step': int,
+                            'action': str,
+                            'reasoning': str,
+                            'system_message': str,
+                            'patience_before': int,
+                            'patience_after': int
+                        }
+                    ]
+                }
+            ]
+        }
+        """
         import json
         from datetime import datetime
+        import re
 
         bad_cases = []
-        for i, (inp, out, score) in enumerate(zip(sample_inputs, sample_outputs, sample_scores)):
+
+        # Group steps by trajectory using traj_uids
+        # Each trajectory may have multiple steps (expanded batch)
+        unique_trajs = {}
+        for i, score in enumerate(sample_scores):
             if score <= 0:  # Failed trajectory
-                # Get unique identifiers from metadata
-                playbook_id = ''
-                scenario = ''
-                traj_uid = ''
+                traj_uid = traj_uids[i] if traj_uids is not None and i < len(traj_uids) else str(i)
+                if traj_uid not in unique_trajs:
+                    unique_trajs[traj_uid] = {
+                        'indices': [],
+                        'score': score
+                    }
+                unique_trajs[traj_uid]['indices'].append(i)
 
-                if env_kwargs is not None and i < len(env_kwargs):
-                    env_kw = env_kwargs[i]
-                    if isinstance(env_kw, dict):
-                        playbook_id = env_kw.get('playbook_id', '')
-                if data_sources is not None and i < len(data_sources):
-                    scenario = str(data_sources[i])
+        # Build bad cases for each failed trajectory
+        for traj_uid, traj_data in unique_trajs.items():
+            indices = traj_data['indices']
+            first_idx = indices[0]
 
-                # task_type from prompt as fallback for scenario
-                task_type = self._detect_task_type_from_input(inp)
-                if not scenario:
-                    scenario = task_type
+            # Get trajectory-level info
+            playbook_id = ''
+            scenario = ''
 
-                user_query = self._extract_user_query(inp)
-                trajectory = self._parse_conversation_to_steps(inp, out)
+            if env_kwargs is not None and first_idx < len(env_kwargs):
+                env_kw = env_kwargs[first_idx]
+                if isinstance(env_kw, dict):
+                    playbook_id = env_kw.get('playbook_id', '')
+            if data_sources is not None and first_idx < len(data_sources):
+                scenario = str(data_sources[first_idx])
+
+            # Get dialogue history from last step (most complete)
+            dialogue_history = []
+            if dialogue_histories is not None:
+                # Get dialogue from the last step of this trajectory
+                last_idx = indices[-1]
+                if last_idx < len(dialogue_histories):
+                    dh = dialogue_histories[last_idx]
+                    if isinstance(dh, list):
+                        dialogue_history = dh
+
+            # Extract error actions: steps where fell_back=True or patience decreased
+            error_actions = []
+            for step_idx, idx in enumerate(indices):
+                # Get step info
+                step_info = None
+                if step_infos is not None and idx < len(step_infos):
+                    step_info = step_infos[idx]
+
+                # Get action
+                action = ''
+                if text_actions is not None and idx < len(text_actions):
+                    action = text_actions[idx]
+
+                # Check if this step had an error (fell_back or patience decrease)
+                is_error = False
+                patience_before = 2
+                patience_after = 2
+                system_message = ''
+                fell_back = False
+
+                if step_info is not None and isinstance(step_info, dict):
+                    fell_back = step_info.get('fell_back', False)
+                    patience_after = step_info.get('patience', 2)
+                    # patience_before would be from previous step or initial (2)
+
+                    # Check for system message in dialogue history
+                    # System messages are added when fell_back=True
+                    if dialogue_history:
+                        for turn in reversed(dialogue_history):
+                            if turn.get('role') == 'system':
+                                system_message = turn.get('content', '')
+                                break
+
+                    is_error = fell_back or (patience_after < patience_before)
+
+                if is_error:
+                    # Parse reasoning from model output
+                    reasoning = self._extract_reasoning(sample_outputs[idx] if idx < len(sample_outputs) else '')
+
+                    error_actions.append({
+                        'step': step_idx,
+                        'action': action,
+                        'reasoning': reasoning,
+                        'system_message': system_message,
+                        'patience_before': patience_before,
+                        'patience_after': patience_after
+                    })
+
+            # Only save if we have error actions or no step info available
+            if error_actions or step_infos is None:
+                # Fallback: extract from raw prompt if no step info
+                if not error_actions and step_infos is None:
+                    # Use legacy parsing
+                    user_query = self._extract_user_query(sample_inputs[first_idx])
+                    trajectory = self._parse_conversation_to_steps(sample_inputs[first_idx], sample_outputs[first_idx])
+                    error_actions = [{
+                        'step': 0,
+                        'action': trajectory[-1].get('action', '') if trajectory else '',
+                        'reasoning': '',
+                        'system_message': '',
+                        'patience_before': 2,
+                        'patience_after': 0
+                    }]
+                    dialogue_history = trajectory
 
                 bad_cases.append({
                     'playbook_id': playbook_id,
                     'scenario': scenario,
-                    'user_query': user_query,
-                    'trajectory': trajectory,
-                    'score': score,
+                    'dialogue_history': dialogue_history,
+                    'error_actions': error_actions,
+                    'score': traj_data['score']
                 })
 
         if not bad_cases:
@@ -921,6 +1049,21 @@ class RayPPOTrainer:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         print(f"[BadCases] Saved {len(bad_cases)} failures to {filename}")
+
+    def _extract_reasoning(self, output: str) -> str:
+        """Extract reasoning/thought from model output."""
+        import re
+        # Try to extract <think>...</think> or similar patterns
+        think_match = re.search(r'<think>(.*?)</think>', output, re.DOTALL)
+        if think_match:
+            return think_match.group(1).strip()[:500]
+
+        # Try to extract before <action> tag
+        action_match = re.search(r'(.*?)<action>', output, re.DOTALL)
+        if action_match:
+            return action_match.group(1).strip()[:500]
+
+        return ''
 
     def _update_skills_from_validation(
         self,

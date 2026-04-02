@@ -388,6 +388,24 @@ class TrajectoryCollector:
 
             if 'tool_calling' in infos[0]:
                 tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]
+
+            # Save step-level info for bad case analysis
+            # Each info contains: fell_back, sentiment, patience, won, scenario, business_outcome
+            batch.non_tensor_batch['step_info'] = np.array(infos, dtype=object)
+
+            # Save text actions for each step
+            batch.non_tensor_batch['text_action'] = np.array(text_actions, dtype=object)
+
+            # Save dialogue_history from observation for each step
+            # obs['anchor'] contains the raw observation with dialogue_history
+            if obs.get('anchor') is not None:
+                batch.non_tensor_batch['dialogue_history'] = np.array(
+                    [anchor.get('dialogue_history', []) for anchor in obs['anchor']],
+                    dtype=object
+                )
+            else:
+                batch.non_tensor_batch['dialogue_history'] = np.array([[] for _ in range(batch_size)], dtype=object)
+
             # Create reward tensor, only assign rewards for active environments
             # episode_rewards += torch_to_numpy(rewards) * torch_to_numpy(active_masks)
             episode_rewards[active_masks] += torch_to_numpy(rewards)[active_masks]
