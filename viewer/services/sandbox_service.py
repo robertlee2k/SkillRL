@@ -67,7 +67,8 @@ class ModelManager:
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             checkpoint_path,
-            trust_remote_code=True
+            trust_remote_code=True,
+            fix_mistral_regex=True
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             checkpoint_path,
@@ -195,7 +196,7 @@ def parse_model_output(output: str) -> Tuple[str, Optional[str]]:
     """
     解析模型输出，提取动作和推理过程。
 
-    训练格式: ◈...◈ 用于思考，<action>...</action> 用于动作。
+    使用与训练一致的解析逻辑 (etl.rl_interfaces.customer_service_projection)。
 
     Args:
         output: 模型生成的原始输出
@@ -203,21 +204,17 @@ def parse_model_output(output: str) -> Tuple[str, Optional[str]]:
     Returns:
         (action, reasoning) 元组，reasoning 可能为 None
     """
-    # 提取动作
-    action_match = re.search(r'<action>(.*?)</action>', output, re.DOTALL)
-    action = action_match.group(1).strip() if action_match else ""
+    # 使用训练时的解析逻辑
+    from etl.rl_interfaces import customer_service_projection
 
-    # 提取推理过程
-    reasoning_match = re.search(r'◈(.*?)◈', output, re.DOTALL)
+    # customer_service_projection 返回 (actions, valids)
+    actions, valids = customer_service_projection([output], available_skills_list=None)
+
+    action = actions[0] if actions else ""
+
+    # 提取推理过程 - 使用训练时的格式 <think>...</think>
+    reasoning_match = re.search(r'<think>(.*?)</think>', output, re.DOTALL)
     reasoning = reasoning_match.group(1).strip() if reasoning_match else None
-
-    # 回退：如果没有 action 标签，尝试从文本提取
-    if not action:
-        for line in output.split('\n'):
-            line = line.strip()
-            if line.startswith('action:') or line.startswith('<action>'):
-                action = line.replace('action:', '').replace('<action>', '').replace('</action>', '').strip()
-                break
 
     return action, reasoning
 
@@ -226,7 +223,16 @@ def _sync_generate(model, tokenizer, prompt: str, temperature: float = 0.4, max_
     """
     同步生成函数，用于在 executor 中运行。
     """
+    logger.info(f"[generate] Prompt length: {len(prompt)} chars")
+
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    logger.info(f"[generate] Input tokens: {inputs['input_ids'].shape}")
+
+    # 确保 pad_token_id 和 eos_token_id 有效
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    eos_token_id = tokenizer.eos_token_id
+
+    logger.info(f"[generate] pad_token_id: {pad_token_id}, eos_token_id: {eos_token_id}")
 
     with torch.no_grad():
         outputs = model.generate(
@@ -235,16 +241,32 @@ def _sync_generate(model, tokenizer, prompt: str, temperature: float = 0.4, max_
             temperature=temperature,
             top_p=0.9,
             do_sample=True,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
         )
+
+    logger.info(f"[generate] Output tokens shape: {outputs.shape}")
 
     # 只解码新生成的 token
     new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+    logger.info(f"[generate] New tokens count: {len(new_tokens)}")
+
     response = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    logger.info(f"[generate] Response length: {len(response)} chars, preview: {response[:200]}...")
+
+    # 去掉开头的空白
+    response = response.lstrip()
+    logger.info(f"[generate] After lstrip, length: {len(response)} chars")
+
+    # 截断到第一个 </action> 后（模型可能输出多个action，只取第一个）
+    if '</action>' in response:
+        # 找到第一个 </action> 的位置，截取到它之后
+        end_pos = response.find('</action>') + len('</action>')
+        response = response[:end_pos].rstrip()
+        logger.info(f"[generate] Truncated at first </action>, length: {len(response)} chars")
 
     # 截断到第一个 Human: 或买家: 出现的位置（防止模型继续生成多轮对话）
-    for stop in ["Human:", "买家:", "\n\n\n"]:
+    for stop in ["Human:", "买家:"]:
         if stop in response:
             response = response.split(stop)[0].rstrip()
 

@@ -436,27 +436,42 @@ def map_analyze_chunk(
 # Reduce Phase - Deduplication & Synthesis
 # =============================================================================
 
-def build_reduce_prompt(action: str, description: str, all_mistakes: List[Dict[str, str]]) -> str:
+def build_reduce_prompt(action: str, description: str, all_mistakes: List[Dict[str, str]], existing_mistakes: List[Dict[str, str]] = None) -> str:
     """Build the prompt for REDUCE phase (deduplication and synthesis)."""
-    mistakes_json = json.dumps(all_mistakes, ensure_ascii=False, indent=2)
+    new_mistakes_json = json.dumps(all_mistakes, ensure_ascii=False, indent=2)
+
+    # Format existing mistakes if any
+    existing_section = ""
+    if existing_mistakes:
+        existing_json = json.dumps(existing_mistakes, ensure_ascii=False, indent=2)
+        existing_section = f"""
+## 现有的避坑指南（需要保留有价值的部分）
+
+以下是该动作已有的避坑指南，请保留其中有价值的规则，与新发现的规则合并：
+
+{existing_json}
+
+"""
 
     prompt = f"""你是一个业务规则归纳专家。针对客服动作 `{action}`，我们从海量报错中提取了以下避坑指南碎片：
 
-{mistakes_json}
+{existing_section}## 新发现的避坑指南
 
-其中包含大量重复或相似的规则。请你对它们进行全局去重、合并和提炼。
+{new_mistakes_json}
 
 ## 动作信息
 
 **动作ID**: `{action}`
 **动作描述**: {description}
-**原始规则数量**: {len(all_mistakes)}
+**新发现规则数量**: {len(all_mistakes)}
+**原有规则数量**: {len(existing_mistakes) if existing_mistakes else 0}
 
 ## 任务要求
 
-1. **去重**: 合并意思相近的触发条件
-2. **提炼**: 提取最致命、最具代表性的 3-5 条终极避坑指南
-3. **精简**: 每条规则要简洁明了，直击要点
+1. **合并**: 将新发现的规则与原有规则合并，保留原有有价值的规则
+2. **去重**: 合并意思相近的触发条件
+3. **提炼**: 提取最致命、最具代表性的 3-5 条终极避坑指南
+4. **精简**: 每条规则要简洁明了，直击要点
 
 ## 输出格式
 
@@ -485,7 +500,8 @@ def reduce_mistakes(
     client: DoubaoClient,
     action: str,
     description: str,
-    all_mapped_mistakes: List[Dict[str, str]]
+    all_mapped_mistakes: List[Dict[str, str]],
+    existing_mistakes: List[Dict[str, str]] = None
 ) -> List[Dict[str, str]]:
     """
     Reduce phase: Deduplicate and synthesize all mapped mistakes.
@@ -495,22 +511,29 @@ def reduce_mistakes(
         action: The skill/action name
         description: Skill description
         all_mapped_mistakes: All mistakes from MAP phase
+        existing_mistakes: Existing mistakes from registry to merge with
 
     Returns:
         Final list of deduplicated, synthesized mistakes (3-5 items)
     """
-    if not all_mapped_mistakes:
+    if not all_mapped_mistakes and not existing_mistakes:
         return []
 
-    # If we have few mistakes already, no need to reduce
-    if len(all_mapped_mistakes) <= 5:
-        logger.info(f"  [Reduce] Only {len(all_mapped_mistakes)} mistakes, skip reduce")
-        return all_mapped_mistakes
+    # If only existing mistakes, just return them
+    if not all_mapped_mistakes:
+        logger.info(f"  [Reduce] No new mistakes, keeping {len(existing_mistakes)} existing ones")
+        return existing_mistakes[:5]
 
-    logger.info(f"  [Reduce] Synthesizing {len(all_mapped_mistakes)} mistakes into 3-5 final rules...")
+    # If we have few mistakes total and no existing, no need to reduce
+    total_mistakes = len(all_mapped_mistakes) + (len(existing_mistakes) if existing_mistakes else 0)
+    if total_mistakes <= 5 and not existing_mistakes:
+        logger.info(f"  [Reduce] Only {len(all_mapped_mistakes)} mistakes, skip reduce")
+        return all_mapped_mistakes[:5]
+
+    logger.info(f"  [Reduce] Synthesizing {len(all_mapped_mistakes)} new + {len(existing_mistakes) if existing_mistakes else 0} existing mistakes into 3-5 final rules...")
 
     try:
-        prompt = build_reduce_prompt(action, description, all_mapped_mistakes)
+        prompt = build_reduce_prompt(action, description, all_mapped_mistakes, existing_mistakes)
         response = client.analyze(prompt)
         final_mistakes = parse_mistakes_response(response)
 
@@ -519,8 +542,9 @@ def reduce_mistakes(
 
     except Exception as e:
         logger.error(f"  [Reduce] Failed: {e}")
-        # Fallback: return first 5 mistakes
-        return all_mapped_mistakes[:5]
+        # Fallback: merge and return first 5
+        merged = (existing_mistakes or []) + all_mapped_mistakes
+        return merged[:5]
 
 
 # =============================================================================
@@ -674,6 +698,7 @@ def save_registry(registry: Dict[str, Any], output_path: str):
 def process_action_with_mapreduce(
     client: DoubaoClient,
     group: ActionFailureGroup,
+    registry: Dict[str, Any],
     batch_size: int,
     max_workers: int,
     max_mistakes_per_action: int
@@ -681,13 +706,22 @@ def process_action_with_mapreduce(
     """
     Process a single action using MapReduce architecture.
 
-    1. Split contexts into chunks
-    2. Map: Parallel LLM analysis of each chunk
-    3. Reduce: Deduplicate and synthesize final mistakes
+    1. Get existing mistakes from registry
+    2. Split contexts into chunks
+    3. Map: Parallel LLM analysis of each chunk
+    4. Reduce: Merge existing + new mistakes, deduplicate and synthesize
     """
     action = group.action
     description = SKILL_DESCRIPTIONS.get(action, '未知动作')
     contexts = group.contexts
+
+    # Get existing mistakes from registry
+    skill, location = find_skill_in_registry(registry, action)
+    existing_mistakes = []
+    if skill is not None:
+        existing_mistakes = skill.get('common_mistakes', [])
+        if existing_mistakes:
+            logger.info(f"  [MapReduce] {action}: found {len(existing_mistakes)} existing mistakes in registry")
 
     # Split into chunks
     chunks = chunk_contexts(contexts, batch_size)
@@ -721,12 +755,13 @@ def process_action_with_mapreduce(
 
     logger.info(f"  [Map] Total extracted: {len(all_mapped_mistakes)} raw mistakes")
 
-    # === REDUCE Phase: Deduplicate and synthesize ===
+    # === REDUCE Phase: Merge existing + new, deduplicate and synthesize ===
     final_mistakes = reduce_mistakes(
         client,
         action,
         description,
-        all_mapped_mistakes
+        all_mapped_mistakes,
+        existing_mistakes  # Pass existing mistakes to merge
     )
 
     # Trim to max
@@ -802,6 +837,7 @@ def evolve_skills(
             final_mistakes = process_action_with_mapreduce(
                 client=client,
                 group=group,
+                registry=registry,  # Pass registry to get existing mistakes
                 batch_size=batch_size,
                 max_workers=max_workers,
                 max_mistakes_per_action=max_mistakes_per_action
