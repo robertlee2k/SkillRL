@@ -108,6 +108,29 @@ def customer_service_projection(
         original_action = action
         extracted_skill: Optional[str] = None
 
+
+
+        # ========== 零容忍防御：多动作检测 ==========
+        # 防止模型输出多个 <action> 标签进行 reward hacking
+        action_tag_count = action.count("<action>")
+        if action_tag_count > 1:
+            results.append(INVALID_ACTION)
+            valids[i] = 0
+            logger.warning(
+                f"[projection] Multiple actions detected: {action_tag_count} tags. "
+                f"Output: {original_action[:100]}..."
+            )
+            continue
+
+        # 检查是否有完整的 </action> 闭合标签
+        if "<action>" in action and "</action>" not in action:
+            results.append(INVALID_ACTION)
+            valids[i] = 0
+            logger.warning(
+                f"[projection] Unclosed action tag detected. "
+                f"Output: {original_action[:100]}..."
+            )
+            continue
         # Format validation: enforce thinking process before action
         # This prevents reward hacking where model skips thinking to maximize reward
         think_start_tag = "<think>"

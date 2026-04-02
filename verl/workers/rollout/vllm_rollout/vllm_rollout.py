@@ -144,6 +144,10 @@ class vLLMRollout(BaseRollout):
             n=1,
             logprobs=0,  # can be set to 0 and let actor to recompute
             max_tokens=config.response_length,
+            # ========== 物理层防御：强制停止条件 ==========
+            # 在 </action> 后强制停止生成，防止模型无限重复
+            stop=["</action>"],
+            include_stop_str_in_output=True,  # 保留停止字符串以供正则解析
         )
 
         # we may detokenize the result all together later
