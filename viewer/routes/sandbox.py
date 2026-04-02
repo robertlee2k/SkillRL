@@ -226,9 +226,11 @@ async def step_sandbox(request: StepRequest):
             temperature=0.4,
             max_new_tokens=512
         )
+        logger.info(f"[sandbox] model_output length: {len(model_output)}, content: {model_output[:200]}...")
 
         # 解析输出
         action, thought = parse_model_output(model_output)
+        logger.info(f"[sandbox] parsed action: {action}, thought: {thought}")
 
         # 如果解析失败，使用默认兜底动作
         if not action:

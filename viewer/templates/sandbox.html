@@ -102,7 +102,7 @@
     </div>
 
     <!-- 原始输出 (折叠) -->
-    <details class="raw-output">
+    <details class="raw-output" open>
         <summary>原始模型输出 (Debug)</summary>
         <pre id="raw-output-content">-</pre>
     </details>
@@ -884,8 +884,12 @@ function updateUI(data) {
     }
 
     // 更新原始输出
+    console.log('updateUI received data:', data);
     if (data.raw_output) {
+        console.log('Setting raw_output:', data.raw_output.substring(0, 100));
         elements.rawOutput.textContent = data.raw_output;
+    } else {
+        console.log('No raw_output in data');
     }
 }
 
