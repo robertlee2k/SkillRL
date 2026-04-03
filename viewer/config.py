@@ -6,11 +6,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 # 数据文件路径
 PLAYBOOKS_PATH = PROJECT_ROOT / "outputs" / "playbooks_all.json"
-SESSIONS_PATH = PROJECT_ROOT / "session_order_converted.json"
+SESSIONS_PATH = Path("/home/bo.li/data/SkillRL/session_order_converted.json")
 
 # 分页配置
 PAGE_SIZE = 50
 
 # 沙盒配置
-DEFAULT_CHECKPOINT_PATH = "/home/bo.li/data/SkillRL/skillrl_models/customer_service/epoch_160"
+DEFAULT_CHECKPOINT_PATH = "/home/bo.li/data/SkillRL/skillrl_models/customer_service/step_60"
 DEFAULT_PLAYBOOK_PATH = str(PROJECT_ROOT / "outputs" / "playbooks_all.json")
