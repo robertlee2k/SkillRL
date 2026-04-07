@@ -12,5 +12,5 @@ SESSIONS_PATH = Path("/home/bo.li/data/SkillRL/session_order_converted.json")
 PAGE_SIZE = 50
 
 # 沙盒配置
-DEFAULT_CHECKPOINT_PATH = "/home/bo.li/data/SkillRL/skillrl_models/customer_service/step_60"
+DEFAULT_CHECKPOINT_PATH = "/home/bo.li/data/SkillRL/skillrl_models/customer_service/step_216"
 DEFAULT_PLAYBOOK_PATH = str(PROJECT_ROOT / "outputs" / "playbooks_all.json")

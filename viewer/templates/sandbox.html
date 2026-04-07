@@ -35,9 +35,17 @@
     <div class="main-content">
         <!-- 左侧: 对话展示区 -->
         <div class="dialogue-panel">
-            <h3>对话展示</h3>
+            <h3>模型推演对话</h3>
             <div id="dialogue-container" class="dialogue-scroll">
                 <div class="dialogue-empty">请先选择剧本并点击"初始化"</div>
+            </div>
+        </div>
+
+        <!-- 中间: 原始Session对比 -->
+        <div class="original-panel">
+            <h3>原始Session对话 <span id="original-session-id" class="session-badge"></span></h3>
+            <div id="original-dialogue-container" class="dialogue-scroll">
+                <div class="dialogue-empty">选择剧本后自动加载</div>
             </div>
         </div>
 
@@ -275,19 +283,31 @@
 /* 主内容区 */
 .main-content {
     display: grid;
-    grid-template-columns: 1fr 400px;
+    grid-template-columns: 1fr 1fr 400px;
     gap: 1.5rem;
     min-height: 600px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1400px) {
+    .main-content {
+        grid-template-columns: 1fr 1fr;
+    }
+    .xray-panel {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 900px) {
     .main-content {
         grid-template-columns: 1fr;
+    }
+    .xray-panel {
+        grid-column: span 1;
     }
 }
 
 /* 对话面板 */
-.dialogue-panel {
+.dialogue-panel, .original-panel {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-subtle);
@@ -296,13 +316,27 @@
     overflow: hidden;
 }
 
-.dialogue-panel h3 {
+.dialogue-panel h3, .original-panel h3 {
     margin: 0;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border-subtle);
     font-size: 0.9rem;
     color: var(--text-primary);
     background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-secondary) 100%);
+}
+
+.original-panel {
+    border-left: 3px solid var(--accent-emerald);
+}
+
+.session-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--accent-emerald);
+    background: rgba(16, 185, 129, 0.1);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    margin-left: 0.5rem;
 }
 
 .dialogue-scroll {
@@ -395,6 +429,12 @@
     margin-top: 0.375rem;
     padding-top: 0.375rem;
     border-top: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+.msg-time {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
 }
 
 /* X-Ray 面板 */
@@ -617,6 +657,8 @@ const elements = {
     patience: document.getElementById('patience'),
     sessionInfo: document.getElementById('session-info'),
     dialogueContainer: document.getElementById('dialogue-container'),
+    originalDialogueContainer: document.getElementById('original-dialogue-container'),
+    originalSessionId: document.getElementById('original-session-id'),
     xrayThought: document.getElementById('xray-thought'),
     xrayAction: document.getElementById('xray-action'),
     xrayNode: document.getElementById('xray-node'),
@@ -635,6 +677,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindEvents();
 });
 
+// 存储当前选中的playbook信息
+let currentPlaybookData = null;
+
 async function loadPlaybooks() {
     try {
         const response = await fetch('/sandbox/api/playbooks');
@@ -643,11 +688,12 @@ async function loadPlaybooks() {
         data.playbooks.forEach(p => {
             const option = document.createElement('option');
             option.value = p.playbook_id;
+            option.dataset.sessionId = p.session_id;
             option.textContent = `${p.playbook_id} (${p.scenario}, ${p.rl_steps || 0} steps)`;
             elements.playbookSelect.appendChild(option);
         });
 
-        state.playbooks = data.playbooks.map(p => p.playbook_id);
+        state.playbooks = data.playbooks;
         console.log(`Loaded ${data.playbooks.length} playbooks`);
     } catch (error) {
         console.error('Failed to load playbooks:', error);
@@ -679,6 +725,84 @@ function bindEvents() {
     elements.btnStep.addEventListener('click', handleStep);
     elements.btnAutorun.addEventListener('click', handleAutorun);
     elements.btnReset.addEventListener('click', handleReset);
+    elements.playbookSelect.addEventListener('change', handlePlaybookSelect);
+}
+
+// ==================== 原始Session加载 ====================
+async function handlePlaybookSelect() {
+    const playbookId = elements.playbookSelect.value;
+    if (!playbookId) {
+        elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">选择剧本后自动加载</div>';
+        elements.originalSessionId.textContent = '';
+        currentPlaybookData = null;
+        return;
+    }
+
+    // 获取选中的session_id
+    const selectedOption = elements.playbookSelect.selectedOptions[0];
+    const sessionId = selectedOption.dataset.sessionId;
+
+    elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">加载中...</div>';
+
+    try {
+        // 加载playbook详情
+        const playbookResponse = await fetch(`/api/playbook/${playbookId}`);
+        const playbookData = await playbookResponse.json();
+        currentPlaybookData = playbookData;
+
+        // 加载原始session
+        if (sessionId) {
+            const sessionResponse = await fetch(`/api/session/${sessionId}`);
+            const sessionData = await sessionResponse.json();
+
+            if (sessionData.error) {
+                elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">无原始Session数据</div>';
+                elements.originalSessionId.textContent = '';
+            } else {
+                elements.originalSessionId.textContent = sessionId;
+                displayOriginalSession(sessionData);
+            }
+        } else {
+            elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">无关联Session</div>';
+            elements.originalSessionId.textContent = '';
+        }
+    } catch (error) {
+        console.error('Failed to load original session:', error);
+        elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">加载失败</div>';
+    }
+}
+
+function displayOriginalSession(sessionData) {
+    elements.originalDialogueContainer.innerHTML = '';
+
+    if (!sessionData.messages || sessionData.messages.length === 0) {
+        elements.originalDialogueContainer.innerHTML = '<div class="dialogue-empty">无消息记录</div>';
+        return;
+    }
+
+    sessionData.messages.forEach(msg => {
+        const bubble = document.createElement('div');
+
+        // 根据发送者确定角色
+        const role = msg.sent_by === 'BUYER' ? 'buyer' : 'agent';
+        bubble.className = `msg-bubble ${role}`;
+
+        const roleLabel = {
+            'buyer': '买家',
+            'agent': '客服'
+        };
+
+        bubble.innerHTML = `
+            <div class="msg-role">${roleLabel[role] || msg.sent_by}</div>
+            <div class="msg-content">${escapeHtml(msg.content)}</div>
+            <div class="msg-time">${msg.sent_at || ''}</div>
+        `;
+
+        elements.originalDialogueContainer.appendChild(bubble);
+    });
+
+    // 滚动到底部
+    elements.originalDialogueContainer.scrollTop = elements.originalDialogueContainer.scrollHeight;
 }
 
 // ==================== 事件处理 ====================

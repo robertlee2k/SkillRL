@@ -79,6 +79,7 @@ async def list_playbooks():
     for p in playbooks[:100]:  # 限制返回前100个
         result.append({
             "playbook_id": p.playbook_id,
+            "session_id": p.session_id,
             "scenario": p.scenario,
             "rl_steps": p.rl_steps,
             "has_order": p.business_outcome.has_order if p.business_outcome else False
