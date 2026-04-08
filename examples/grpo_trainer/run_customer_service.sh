@@ -37,7 +37,7 @@ val_ratio=0.2        # 验证集比例
 max_rl_steps=20       # RL steps上限阈值（超过的playbook被丢弃）
 seed=1688               # 随机种子
 group_size=8          # Parallel rollouts per episode
-playbook_path=outputs/playbooks_all.json  # Playbook数据文件路径
+playbook_path=outputs/playbooks_all_fixed.json  # Playbook数据文件路径（已清理幽灵动作）
 
 # 预处理客服场景数据（工业级数据准备引擎）
 python3 scripts/prepare_cs_data.py \

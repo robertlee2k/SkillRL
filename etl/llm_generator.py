@@ -42,6 +42,26 @@ VALID_SKILLS_SET = set(VALID_SKILLS)
 VALID_SKILLS_STR = ', '.join(VALID_SKILLS)
 
 
+# 安全话术：不推进业务但不会激怒买家（允许作为幽灵动作存在）
+SAFE_FALLBACK_SKILLS = {
+    'gen_clarify',    # 澄清意图
+    'gen_empathize',  # 安抚共情
+    'gen_greet',      # 寒暄打招呼
+    'gen_apologize',  # 道歉
+    'gen_hold'        # 请稍等
+}
+
+# 业务强制绑定映射：当 slots 中存在特定槽位时，必须添加的技能和对应的目标节点
+# 关键：这些技能必须同时在 available_skills 和 transitions 中添加！
+SLOT_BINDINGS = {
+    'invoice_requested': {
+        'skill': 'aft_issue_invoice',
+        'default_target': 'terminal'  # 发票开具后通常结束对话
+    },
+    # 未来可扩展其他强制绑定技能
+}
+
+
 def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
     """
     Post-process LLM-generated playbook to fix common issues.
@@ -52,6 +72,8 @@ def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
     3. Ensures all node references exist
     4. Adds terminal node if missing
     5. Removes unreachable nodes
+    6. [CRITICAL] Ensures available_skills = transitions.keys() | SAFE_FALLBACK_SKILLS
+    7. [CRITICAL] Adds forced skills based on slot bindings (e.g., invoice)
 
     Args:
         playbook: Raw playbook dict from LLM
@@ -75,17 +97,13 @@ def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
             'default_fallback': 'terminal'
         }
 
+    # Get initial slots for dynamic patching
+    initial_slots = playbook.get('initial_slots', {})
+
     # Process each node
     for node_id, node in nodes.items():
         if not isinstance(node, dict):
             continue
-
-        # Fix available_skills - filter out invalid skills
-        if 'available_skills' in node:
-            valid_skills = [s for s in node['available_skills'] if s in VALID_SKILLS_SET]
-            if not valid_skills:
-                valid_skills = ['gen_clarify', 'gen_apologize']
-            node['available_skills'] = valid_skills
 
         # Fix transitions - filter out invalid skills and ensure ≥2 branches
         if 'transitions' in node and isinstance(node['transitions'], dict):
@@ -124,16 +142,83 @@ def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
         if 'slot_updates' not in node:
             node['slot_updates'] = {}
 
-    # Remove unreachable nodes (must be reachable via transitions or default_fallback)
-    reachable = {'root'}  # root is always reachable as entry point
-    for node in nodes.values():
-        reachable.update(node.get('transitions', {}).values())
-        fallback = node.get('default_fallback', '')
-        if fallback:
-            reachable.add(fallback)
+    # ============================================================
+    # [CRITICAL FIX] Remove ghost actions & Add forced skills
+    # [CRITICAL] Use DFS traversal to propagate accumulated slots!
+    # ============================================================
+    visited = set()  # Track processed nodes (also used for unreachable detection)
 
-    # Keep only reachable nodes
-    playbook['nodes'] = {k: v for k, v in nodes.items() if k in reachable}
+    def dfs_process_node(node_id: str, accumulated_slots: Dict[str, Any]) -> None:
+        """
+        DFS traversal: process node with accumulated slots, then traverse children.
+
+        Args:
+            node_id: Current node ID
+            accumulated_slots: Slots accumulated from root path (NOT including this node yet)
+        """
+        if node_id in visited or node_id not in nodes:
+            return
+
+        visited.add(node_id)
+        node = nodes[node_id]
+
+        # Merge current node's slot_updates into accumulated_slots
+        current_slots = accumulated_slots.copy()
+        current_slots.update(node.get('slot_updates', {}))
+
+        transitions = node.get('transitions', {})
+        transition_keys = set(transitions.keys())
+
+        # Dynamic patching: Add forced skills based on accumulated slots
+        for slot_name, binding in SLOT_BINDINGS.items():
+            if current_slots.get(slot_name):
+                skill = binding['skill']
+                default_target = binding['default_target']
+
+                # CRITICAL: Must add to BOTH transitions AND available_skills!
+                if skill not in transition_keys:
+                    transitions[skill] = default_target
+                    transition_keys.add(skill)
+
+        # Update transitions (may have been modified by dynamic patching)
+        node['transitions'] = transitions
+
+        # [CRITICAL] available_skills = transitions.keys() | SAFE_FALLBACK_SKILLS
+        # This ensures NO ghost business actions exist!
+        correct_available = transition_keys | SAFE_FALLBACK_SKILLS
+        node['available_skills'] = list(correct_available)
+
+        # DFS: traverse children via transitions edges
+        # Pass current_slots (including this node's updates) to children
+        for target_node_id in transitions.values():
+            if target_node_id and target_node_id != node_id:  # Avoid self-loops
+                dfs_process_node(target_node_id, current_slots)
+
+    # Start DFS from root with initial_slots
+    dfs_process_node('root', initial_slots.copy())
+
+    # Handle orphan nodes (not reachable from root) - process with initial_slots only
+    for node_id in nodes:
+        if node_id not in visited:
+            node = nodes[node_id]
+            transitions = node.get('transitions', {})
+            transition_keys = set(transitions.keys())
+
+            # Orphan nodes: only use initial_slots (no accumulated context)
+            for slot_name, binding in SLOT_BINDINGS.items():
+                if initial_slots.get(slot_name):
+                    skill = binding['skill']
+                    default_target = binding['default_target']
+                    if skill not in transition_keys:
+                        transitions[skill] = default_target
+                        transition_keys.add(skill)
+
+            node['transitions'] = transitions
+            correct_available = transition_keys | SAFE_FALLBACK_SKILLS
+            node['available_skills'] = list(correct_available)
+
+    # Remove unreachable nodes: use visited set from DFS
+    playbook['nodes'] = {k: v for k, v in nodes.items() if k in visited}
 
     # Ensure at least one node has angry sentiment (required for RL punishment)
     has_angry = any(n.get('sentiment') == 'angry' for n in playbook['nodes'].values())

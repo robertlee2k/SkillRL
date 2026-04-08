@@ -18,7 +18,7 @@ Parameters (ratio-driven):
 
 Usage:
     python scripts/prepare_cs_data.py \
-        --playbook_path outputs/playbooks_all.json \
+        --playbook_path outputs/playbooks_all_fixed.json \
         --output_dir ~/data/verl-agent/customer_service \
         --val_ratio 0.15 \
         --train_batch_size 64 \
@@ -661,7 +661,7 @@ Examples:
 
     # Custom parameters
     python scripts/prepare_cs_data.py \
-        --playbook_path outputs/playbooks_all.json \
+        --playbook_path outputs/playbooks_all_fixed.json \
         --output_dir ~/data/verl-agent/customer_service \
         --val_ratio 0.15 \
         --train_batch_size 64 \
@@ -676,7 +676,7 @@ Output files:
     )
 
     parser.add_argument('--playbook_path', type=str,
-                        default='outputs/playbooks_all.json',
+                        default='outputs/playbooks_all_fixed.json',
                         help='Path to playbooks JSON file')
     parser.add_argument('--output_dir', type=str,
                         default='~/data/verl-agent/customer_service',

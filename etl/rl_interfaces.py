@@ -845,22 +845,47 @@ class CustomerServiceEnvironmentManager(EnvironmentManagerBase):
         Process a batch for success evaluation.
 
         Called by success_evaluator to extract success metrics.
+
+        [CRITICAL FIX] Must check done=True AND won=True for success.
+        - Truncated episodes (max_steps reached but done=False) are failures.
+        - Episodes that ended with won=False are failures.
         """
         for i in reversed(range(len(total_batch_list[batch_idx]))):
             batch_item = total_batch_list[batch_idx][i]
             if batch_item.get('active_masks', False):
                 info = total_infos[batch_idx][i]
 
-                # Extract success metrics
-                won_value = float(info.get('won', 0))
-                success['success_rate'].append(won_value)
+                # [CRITICAL] Proper success validation:
+                # Only record success if episode COMPLETED (done=True) AND WON (won=True)
+                # Truncated or failed episodes must record 0.0
+                done = info.get('done', False)
+                won = info.get('won', False)
+
+                if done and won:
+                    success_value = 1.0  # Real success
+                else:
+                    success_value = 0.0  # Truncated or failed
+
+                success['success_rate'].append(success_value)
+
+                # Track truncation rate for monitoring
+                if not done:
+                    success['truncated_rate'].append(1.0)
+                else:
+                    success['truncated_rate'].append(0.0)
+
+                # Track completion rate for monitoring
+                if done:
+                    success['completed_rate'].append(1.0)
+                else:
+                    success['completed_rate'].append(0.0)
 
                 # Extract valid action rate for TensorBoard monitoring
                 success['valid_action_rate'].append(float(info.get('is_action_valid', 0)))
 
                 # Extract scenario-specific metrics
                 scenario = info.get('scenario', 'unknown')
-                success[f'{scenario}_success_rate'].append(won_value)
+                success[f'{scenario}_success_rate'].append(success_value)
 
                 # Extract business metrics
                 business_outcome = info.get('business_outcome', {})
