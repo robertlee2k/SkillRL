@@ -785,15 +785,15 @@ class RayPPOTrainer:
                 text_action_list.append(test_output_gen_batch.non_tensor_batch['text_action'])
             if 'dialogue_history' in test_output_gen_batch.non_tensor_batch:
                 dialogue_history_list.append(test_output_gen_batch.non_tensor_batch['dialogue_history'])
-            # success rate
+            # success rate - aggregate all episodes, not just the first one
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
                     if k not in success_rate_dict:
                         success_rate_dict[k] = []
-                    success_rate_dict[k].append(test_batch.non_tensor_batch[k][0])
-                    # all success_rate should be the same
-                    for i in range(1, len(test_batch.non_tensor_batch[k])):
-                        assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
+                    # [FIX] Take mean of all episodes, not just the first one
+                    values = test_batch.non_tensor_batch[k]
+                    mean_value = np.mean(values) if len(values) > 0 else 0.0
+                    success_rate_dict[k].append(mean_value)
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
