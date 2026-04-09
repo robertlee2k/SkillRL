@@ -287,6 +287,7 @@ class CustomerServiceEnv:
         target_steps = self.current_playbook.get('rl_steps', 0)
 
         info = {
+            'done': self.state.done,  # [CRITICAL FIX] 必须添加 done 字段！
             'fell_back': self.state.fell_back,
             'sentiment': nodes.get(next_node, {}).get('sentiment', 'neutral'),
             'visited_nodes': len(self.state.visited_nodes),
