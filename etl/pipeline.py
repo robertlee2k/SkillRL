@@ -4,12 +4,15 @@
 Implements run_pipeline for complete end-to-end processing.
 Uses LLM for scene classification and playbook generation.
 Supports incremental saving and checkpoint recovery.
+Supports concurrent processing for speedup.
 """
 
 import json
 import logging
+import threading
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .batch import load_sessions, process_batch
 from .classifier import classify_scene
@@ -19,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 # 每 N 条保存一次
 SAVE_INTERVAL = 50
+
+# 线程锁（用于并发安全）
+_playbooks_lock = threading.Lock()
+_stats_lock = threading.Lock()
 
 
 def load_checkpoint(output_file: str) -> tuple:
@@ -59,10 +66,11 @@ def run_pipeline(
     input_file: str,
     output_file: str,
     min_turns: int = 2,
-    resume: bool = True
+    resume: bool = True,
+    max_workers: int = 20
 ) -> Dict[str, int]:
     """
-    Run complete ETL pipeline with checkpoint support.
+    Run complete ETL pipeline with checkpoint support and concurrent processing.
 
     Stage 1: Load raw sessions
     Stage 2: Aggregate and clean
@@ -74,11 +82,13 @@ def run_pipeline(
         output_file: Path to output JSON file for playbooks
         min_turns: Minimum number of turns required for valid session
         resume: Whether to resume from checkpoint (default True)
+        max_workers: Number of concurrent workers (default 20)
 
     Returns:
         Stats dict with total, valid, invalid counts
     """
     logger.info(f"Starting ETL pipeline: {input_file} -> {output_file}")
+    logger.info(f"Concurrent workers: {max_workers}")
 
     # Load checkpoint if resuming
     playbooks, processed_ids = ([], set())
@@ -96,17 +106,25 @@ def run_pipeline(
     stats = {'total': result['stats']['total'], 'valid': len(playbooks), 'invalid': result['stats']['invalid']}
     logger.info(f"Cleaned {len(cleaned)} valid sessions")
 
-    # Count skipped due to checkpoint
+    # Filter out already processed sessions
+    to_process = []
     skipped = 0
-
-    # Stage 3 & 4: Classify and build playbooks using LLM
     for i, session in enumerate(cleaned):
         session_id = session.get('session_id', f'unknown_{i}')
-
-        # Skip if already processed (checkpoint recovery)
         if session_id in processed_ids:
             skipped += 1
-            continue
+        else:
+            to_process.append(session)
+
+    if skipped > 0:
+        logger.info(f"Skipped {skipped} already processed sessions (checkpoint)")
+
+    logger.info(f"Processing {len(to_process)} sessions with {max_workers} workers...")
+
+    # Process single session function
+    def process_single_session(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Process a single session: classify + build playbook."""
+        session_id = session.get('session_id', 'unknown')
 
         # Stage 3: Classify scene using LLM
         try:
@@ -115,37 +133,59 @@ def run_pipeline(
             logger.info(f"[{session_id}] Classified as: {scenario}")
         except Exception as e:
             logger.error(f"[{session_id}] Classification failed: {e}")
-            stats['invalid'] += 1
-            continue
+            with _stats_lock:
+                stats['invalid'] += 1
+            return None
 
         # Stage 4: Build playbook using LLM
         playbook = build_playbook(session)
 
         if playbook is None:
             logger.warning(f"[{session_id}] Playbook generation failed")
-            stats['invalid'] += 1
-            continue
+            with _stats_lock:
+                stats['invalid'] += 1
+            return None
 
         # Validate playbook
         try:
             validate_playbook(playbook)
-            playbooks.append(playbook)
-            stats['valid'] += 1
-            processed_ids.add(session_id)
             logger.info(f"[{session_id}] Playbook generated successfully with {len(playbook['nodes'])} nodes")
+            return playbook
         except ValidationError as e:
             logger.warning(f"[{session_id}] Playbook validation failed: {e}")
-            stats['invalid'] += 1
+            with _stats_lock:
+                stats['invalid'] += 1
+            return None
 
-        # Incremental save every SAVE_INTERVAL playbooks
-        if len(playbooks) % SAVE_INTERVAL == 0:
-            save_incremental(playbooks, output_file)
+    # Concurrent processing
+    completed_count = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_session = {
+            executor.submit(process_single_session, session): session
+            for session in to_process
+        }
+
+        # Process completed tasks
+        for future in as_completed(future_to_session):
+            result_playbook = future.result()
+
+            if result_playbook is not None:
+                with _playbooks_lock:
+                    playbooks.append(result_playbook)
+                    stats['valid'] += 1
+                    processed_ids.add(result_playbook['session_id'])
+                    completed_count = len(playbooks)
+
+                # Incremental save every SAVE_INTERVAL playbooks
+                if completed_count % SAVE_INTERVAL == 0:
+                    with _playbooks_lock:
+                        save_incremental(playbooks.copy(), output_file)
 
     # Final save
     save_incremental(playbooks, output_file)
 
-    if skipped > 0:
-        logger.info(f"Skipped {skipped} already processed sessions (checkpoint)")
     logger.info(f"Pipeline complete: {stats['valid']} valid, {stats['invalid']} invalid")
 
     return stats

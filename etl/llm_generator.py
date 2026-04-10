@@ -220,6 +220,13 @@ def post_process_playbook(playbook: Dict[str, Any]) -> Dict[str, Any]:
     # Remove unreachable nodes: use visited set from DFS
     playbook['nodes'] = {k: v for k, v in nodes.items() if k in visited}
 
+    # [CRITICAL FIX] Re-fix default_fallback after node removal
+    # Some nodes may have default_fallback pointing to nodes that were just removed
+    for node_id, node in playbook['nodes'].items():
+        fallback = node.get('default_fallback', '')
+        if fallback not in playbook['nodes']:
+            node['default_fallback'] = 'terminal'
+
     # Ensure at least one node has angry sentiment (required for RL punishment)
     has_angry = any(n.get('sentiment') == 'angry' for n in playbook['nodes'].values())
     if not has_angry and 'root' in playbook['nodes']:
@@ -502,9 +509,36 @@ class LLMGenerator:
    - 负向路径的buyer_text必须体现买家情绪恶化（sentiment设为"angry"）
    - 例如：Agent敷衍 → 买家愤怒追问
 
-4. **槽位更新**：
-   - 如果对话中买家提供了订单号、商品ID等信息，在slot_updates中标记
-   - 例如：{{"order_id_collected": true}}
+4. **动态业务上下文提取（开放式信息抽取）**：
+   - **抛弃固有槽位**，采用"开放域抽象信息抽取"方法，提取对话中产生的所有隐性业务知识
+   - 必须提取以下5个抽象维度（均为自然语言文本，不是布尔标记）：
+
+   a) **user_intent（买家核心诉求）**：
+      - 买家此次咨询的真实目的（如："想确认赠品是否为bebebus滑板车"、"投诉发票金额错误"、"催促发货"）
+
+   b) **item_specifics（商品具体信息）**：
+      - 买家明确提及或确认的商品细节（如："确认购买的是藏青色M码"、"询问的型号是A7Pro"、"预算范围300-500元"）
+
+   c) **system_status（系统状态确认）**：
+      - 客服查询后告知的物流/订单状态（如："物流卡在义乌分拨中心3天"、"订单号显示已签收但买家未收到"、"退差价申请已提交"）
+
+   d) **agent_commitments（客服承诺与约束）**：
+      - 客服明确给出的承诺或特殊处理方案（如："承诺24小时内发货"、"约定超期可退货"、"确认会追加赠品"）
+
+   e) **other_crucial_context（兜底关键信息）**：
+      - 【防丢弃机制】：如果对话中出现了极其重要、决定后续走向，但实在无法合理归入前4类的业务上下文（例如：前置条件"等待买家晚点发破损照片"、买家强烈的预算底线等），必须存入此处。如果没有，可留空。
+
+   🔴 **【边界防混淆规则（极度重要）】**：
+   - `system_status` 仅限不可更改的客观系统事实（如：系统显示缺货、物流停滞）。
+   - `agent_commitments` 包含主观的人为干预、特殊放宽或动作承诺（如：答应退差价、答应从其他仓调货）。
+   - **冲突仲裁**：如果一句话同时包含系统状态和客服承诺（例如："查了系统缺货，但我答应您明天从别处调货补发"），**优先且必须整体归入 `agent_commitments`**！
+
+   🔴 **【状态流转与增量更新规则（DST Rules）】**：
+   1. **增量输出 (Delta Updates)**：`slot_updates` 代表的是"当前这一轮节点"产生的状态**变化量**。由于子节点会自动继承父节点的状态，如果某个维度在当前轮次没有新信息或变化，**请不要输出该字段（留空即可）**，避免冗余。
+   2. **覆写与清除 (Overwrite & Clear)**：如果买家在当前轮次改变了主意（如：原来要红色的，现在说要蓝色的），请直接输出 `"item_specifics": "买家改要蓝色款"`，下游系统会自动覆写旧值。如果某个诉求已经被彻底解决且后续不再需要关注，可以输出 `"user_intent": "已解决"` 来刷新状态。
+   3. **多值合并 (Multi-value Concat)**：如果买家在同一句话中表达了多个意图（如既问发票又催物流），或者锁定了多个商品，请不要遗漏，将它们用分号合并在一个字符串中。例如：`"user_intent": "催促发货; 询问发票开具流程"`。
+
+   - 这些动态上下文将作为状态机的补丁，随着对话树向下流转，成为后续 Agent 继续服务时必须知道的客观环境。
 
 5. **🔴🔴🔴 风控兜底规则（最高优先级）**：
    - 在物流(logistics)和售后(aftersale)场景中，如果对话表明买家持续无法提供订单号，或者遇到系统查无此单的情况，你在脑补客服的应对分支时，正确的安全动作必须是使用 gen_transfer（转接人工），绝不能使用退款(aft_initiate_refund)、退换(aft_initiate_return/aft_initiate_exchange)、补偿(aft_compensate)或直接生硬拒绝(aft_reject_explain)的技能。
@@ -532,7 +566,13 @@ class LLMGenerator:
     "root": {{
       "buyer_text": "买家说的话",
       "sentiment": "calm|neutral|angry",
-      "slot_updates": {{}},
+      "slot_updates": {{
+        "user_intent": "买家核心诉求（自然语言描述）",
+        "item_specifics": "商品具体信息（型号/颜色/尺寸等）",
+        "system_status": "物流/订单状态确认",
+        "agent_commitments": "客服承诺内容",
+        "other_crucial_context": "等待买家后续补充破损图片（可选的兜底信息）"
+      }},
       "available_skills": ["skill1", "skill2", ...],
       "transitions": {{
         "skill_id": "next_node_id",

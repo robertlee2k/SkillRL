@@ -176,6 +176,8 @@ async def init_sandbox(request: InitRequest):
                 "thought": None,
                 "action": None,
                 "available_skills": observation.get("available_skills", []),
+                "slots": observation.get("slots", {}),  # 新增slots
+                "sentiment": observation.get("sentiment", "neutral"),
             }
         }
 
@@ -269,6 +271,7 @@ async def step_sandbox(request: StepRequest):
                 "sentiment": step_info.get("sentiment", "neutral"),
                 "system_message": system_message,
                 "available_skills": obs.get("available_skills", []),
+                "slots": obs.get("slots", {}),  # 新增slots
             },
             "state": {
                 "node_id": obs.get("node_id", "root"),
@@ -368,12 +371,23 @@ async def list_sessions():
 
 def _format_observation(observation: dict) -> dict:
     """格式化观察数据供前端使用"""
+    # 格式化 slots，显示4个富文本维度
+    slots = observation.get("slots", {})
+    formatted_slots = {}
+    if slots:
+        # 重点展示4个抽象维度
+        for key in ["user_intent", "item_specifics", "system_status", "agent_commitments"]:
+            value = slots.get(key, "")
+            if value:
+                formatted_slots[key] = value
+
     return {
         "node_id": observation.get("node_id", "root"),
         "buyer_text": observation.get("buyer_text", ""),
         "sentiment": observation.get("sentiment", "neutral"),
         "patience": observation.get("patience", 2),
         "scenario": observation.get("scenario", "unknown"),
+        "slots": formatted_slots,  # 新增slots字段
     }
 
 
