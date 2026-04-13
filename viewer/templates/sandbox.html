@@ -396,6 +396,20 @@
     align-self: flex-end;
 }
 
+/* QA客服 - 知识库回复，使用蓝紫色 */
+.msg-bubble.agent.qa {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.05) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-left: 3px solid #3b82f6;
+}
+
+/* Assistant客服 - 人工回复，使用紫色 */
+.msg-bubble.agent.assistant {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.12) 0%, rgba(168, 85, 247, 0.05) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.2);
+    border-left: 3px solid #a855f7;
+}
+
 .msg-bubble.system {
     background: rgba(244, 63, 94, 0.08);
     border: 1px solid rgba(244, 63, 94, 0.2);
@@ -421,6 +435,8 @@
 
 .msg-bubble.buyer .msg-role { color: var(--accent-sky); }
 .msg-bubble.agent .msg-role { color: var(--accent-violet); }
+.msg-bubble.agent.qa .msg-role { color: #3b82f6; }
+.msg-bubble.agent.assistant .msg-role { color: #a855f7; }
 .msg-bubble.system .msg-role { color: var(--accent-rose); }
 .msg-bubble.system.warning .msg-role { color: var(--accent-primary); }
 
@@ -825,17 +841,34 @@ function displayOriginalSession(sessionData) {
     sessionData.messages.forEach(msg => {
         const bubble = document.createElement('div');
 
-        // 根据发送者确定角色
-        const role = msg.sent_by === 'BUYER' ? 'buyer' : 'agent';
-        bubble.className = `msg-bubble ${role}`;
+        // 根据发送者确定角色和样式
+        let role, roleLabel, roleClass;
+        if (msg.sent_by === 'BUYER') {
+            role = 'buyer';
+            roleLabel = '买家';
+            roleClass = 'buyer';
+        } else if (msg.sent_by === 'QA') {
+            role = 'agent';
+            roleLabel = '客服(QA)';
+            roleClass = 'agent qa';
+        } else if (msg.sent_by === 'ASSISTANT') {
+            role = 'agent';
+            roleLabel = '客服(Assistant)';
+            roleClass = 'agent assistant';
+        } else if (msg.sent_by === 'SYSTEM') {
+            role = 'system';
+            roleLabel = '系统';
+            roleClass = 'system';
+        } else {
+            role = 'agent';
+            roleLabel = msg.sent_by;
+            roleClass = 'agent';
+        }
 
-        const roleLabel = {
-            'buyer': '买家',
-            'agent': '客服'
-        };
+        bubble.className = `msg-bubble ${roleClass}`;
 
         bubble.innerHTML = `
-            <div class="msg-role">${roleLabel[role] || msg.sent_by}</div>
+            <div class="msg-role">${roleLabel}</div>
             <div class="msg-content">${escapeHtml(msg.content)}</div>
             <div class="msg-time">${msg.sent_at || ''}</div>
         `;
@@ -1143,7 +1176,8 @@ function updateXray(xray, state) {
             'user_intent': '买家核心诉求',
             'item_specifics': '商品具体信息',
             'system_status': '系统状态确认',
-            'agent_commitments': '客服承诺内容'
+            'agent_commitments': '客服承诺内容',
+            'other_crucial_context': '其他关键上下文'
         };
         let slotsHtml = '';
         for (const [key, value] of Object.entries(xray.slots)) {
