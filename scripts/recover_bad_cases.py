@@ -8,7 +8,7 @@ against playbooks to recover the lost playbook_id metadata.
 Usage:
     python scripts/recover_bad_cases.py \
         --bad_case_file outputs/bad_cases/bad_cases_step90_*.json \
-        --playbook_path outputs/playbooks_all.json \
+        --playbook_path outputs/playbooks_all_fixed_v2.json \
         --output_path outputs/recovered_bad_cases_step90.json
 """
 
@@ -352,7 +352,7 @@ def main():
     parser.add_argument(
         '--playbook_path',
         type=str,
-        default='outputs/playbooks_all.json',
+        default='outputs/playbooks_all_fixed_v2.json',
         help='Path to playbooks JSON file'
     )
     parser.add_argument(

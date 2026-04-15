@@ -6,8 +6,8 @@
 
 Usage:
     python scripts/fix_ghost_actions.py \
-        --input outputs/playbooks_all.json \
-        --output outputs/playbooks_all_fixed.json
+        --input outputs/playbooks_all_v2.json \
+        --output outputs/playbooks_all_fixed_v2.json
 """
 
 import json

@@ -7,7 +7,7 @@ Ghost Action: An action that exists in `available_skills` list but not in `trans
 This is a read-only analysis script that does NOT modify any files.
 
 Usage:
-    python scripts/audit_skill_mismatch.py --playbook_path outputs/playbooks_all.json
+    python scripts/audit_skill_mismatch.py --playbook_path outputs/playbooks_all_fixed_v2.json
 """
 
 import argparse
@@ -221,7 +221,7 @@ def print_report(results: Dict[str, Any]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description='Audit ghost actions in playbooks')
-    parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all.json',
+    parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all_fixed_v2.json',
                         help='Path to playbooks JSON file')
 
     args = parser.parse_args()

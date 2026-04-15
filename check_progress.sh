@@ -5,8 +5,8 @@ echo "=== ETL Pipeline 进度 ==="
 echo ""
 
 # 检查输出文件
-if [ -f "outputs/playbooks_full.json" ]; then
-    count=$(python -c "import json; print(len(json.load(open('outputs/playbooks_full.json'))))")
+if [ -f "outputs/playbooks_all_v2.json" ]; then
+    count=$(python -c "import json; print(len(json.load(open('outputs/playbooks_all_v2.json'))))")
     echo "✓ 已生成 playbook: $count 个"
     echo ""
 
@@ -14,7 +14,7 @@ if [ -f "outputs/playbooks_full.json" ]; then
     echo "场景分布:"
     python -c "
 import json
-with open('outputs/playbooks_full.json') as f:
+with open('outputs/playbooks_all_v2.json') as f:
     pbs = json.load(f)
 scenarios = {}
 for pb in pbs:

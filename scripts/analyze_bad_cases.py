@@ -15,14 +15,14 @@ Features:
 Usage:
     # Full dataset evaluation with 8 GPUs (default)
     python scripts/analyze_bad_cases.py \
-        --playbook_path outputs/playbooks_all.json \
+        --playbook_path outputs/playbooks_all_fixed_v2.json \
         --checkpoint_path outputs/hf_checkpoints/epoch_40 \
         --num_gpus 8 \
         --max_memory_per_gpu 20
 
     # Single GPU mode (for testing)
     python scripts/analyze_bad_cases.py \
-        --playbook_path outputs/playbooks_all.json \
+        --playbook_path outputs/playbooks_all_fixed_v2.json \
         --checkpoint_path outputs/hf_checkpoints/epoch_40 \
         --num_gpus 1
 """
@@ -734,7 +734,7 @@ Examples:
       --num_samples 100
         """
     )
-    parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all.json',
+    parser.add_argument('--playbook_path', type=str, default='outputs/playbooks_all_fixed_v2.json',
                         help='Path to playbooks JSON file')
     parser.add_argument('--checkpoint_path', type=str,
                         default='/home/bo.li/data/SkillRL/skillrl_models/customer_service/epoch_160',
