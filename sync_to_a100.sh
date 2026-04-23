@@ -2,8 +2,8 @@
 # Sync local SkillRL to A100 server
 # Usage: ./sync_to_a100.sh [--dry-run]
 
-REMOTE="a100:/home/bo.li/SkillRL/"
-LOCAL="/Users/sherry/20-python/SkillRL/"
+REMOTE="a100:~/SkillRL/"
+LOCAL="$(cd "$(dirname "$0")" && pwd)/"
 
 ARGS="-avz --delete \
   --exclude '.git/' \

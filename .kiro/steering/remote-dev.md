@@ -10,14 +10,9 @@ This project uses a **local Mac editing + remote A100 execution** workflow. All 
 
 | Item | Value |
 |------|-------|
-| SSH alias | `a100` |
-| Host | 8.140.34.114 |
-| User | bo.li |
-| Port | 22 |
-| SSH key | `~/.ssh/gitlab_work_key` |
+| SSH alias | `a100` (configured in `~/.ssh/config`) |
 | Conda env | `skillrl` |
-| Remote repo | `/home/bo.li/SkillRL/` |
-| Local repo | `/Users/sherry/20-python/SkillRL/` |
+| Remote repo | `~/SkillRL/` |
 
 ## Workflow: Edit → Sync → Run
 
@@ -43,19 +38,19 @@ For a dry run (preview only):
 All remote commands must activate conda first. Use this pattern:
 
 ```bash
-ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd /home/bo.li/SkillRL && <your command>"
+ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd ~/SkillRL && <your command>"
 ```
 
 For GPU-specific tasks, prefix with `CUDA_VISIBLE_DEVICES`:
 
 ```bash
-ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd /home/bo.li/SkillRL && CUDA_VISIBLE_DEVICES=0,1,2,3 python your_script.py"
+ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd ~/SkillRL && CUDA_VISIBLE_DEVICES=0,1,2,3 python your_script.py"
 ```
 
 ### 4. Pull results back (when needed)
 
 ```bash
-rsync -avz a100:/home/bo.li/SkillRL/outputs/ /Users/sherry/20-python/SkillRL/outputs/ --exclude '.git/'
+rsync -avz a100:~/SkillRL/outputs/ ./outputs/ --exclude '.git/'
 ```
 
 ## GPU Layout
@@ -89,10 +84,10 @@ Without `VLLM_WORKER_MULTIPROC_METHOD=spawn`, you will get `Cannot re-initialize
 
 | Path | Description |
 |------|-------------|
-| `/home/bo.li/data/models/Qwen2.5-7B-Instruct` | Base model (SFT checkpoint) |
-| `/home/bo.li/data/SkillRL/checkpoints/customer_service/grpo_baseline/` | FSDP training checkpoints (global_step_N/) |
-| `/home/bo.li/data/SkillRL/skillrl_models/customer_service/` | Merged HF-format models (step_60, step_150, step_210) |
-| `/home/bo.li/SkillRL/outputs/playbooks_all_fixed_v2.json` | Playbook data (5732 playbooks, ghost actions fixed) |
+| `~/data/models/Qwen2.5-7B-Instruct` | Base model (SFT checkpoint) |
+| `~/data/SkillRL/checkpoints/customer_service/grpo_baseline/` | FSDP training checkpoints (global_step_N/) |
+| `~/data/SkillRL/skillrl_models/customer_service/` | Merged HF-format models (step_60, step_150, step_210) |
+| `~/SkillRL/outputs/playbooks_all_fixed_v2.json` | Playbook data (5732 playbooks, ghost actions fixed) |
 
 ## Quick Reference Commands
 
@@ -103,12 +98,12 @@ ssh a100 "echo OK && hostname"
 
 Sync and run a script:
 ```bash
-./sync_to_a100.sh && ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd /home/bo.li/SkillRL && python scripts/your_script.py"
+./sync_to_a100.sh && ssh a100 "source ~/miniconda3/etc/profile.d/conda.sh && conda activate skillrl && cd ~/SkillRL && python scripts/your_script.py"
 ```
 
 Check training checkpoint status:
 ```bash
-ssh a100 "cat /home/bo.li/data/SkillRL/checkpoints/customer_service/grpo_baseline/latest_checkpointed_iteration.txt"
+ssh a100 "cat ~/data/SkillRL/checkpoints/customer_service/grpo_baseline/latest_checkpointed_iteration.txt"
 ```
 
 Monitor GPU usage:

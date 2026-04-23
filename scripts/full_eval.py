@@ -7,7 +7,7 @@ using the exact same prompt construction and action projection as training.
 
 Usage:
     python scripts/full_eval.py \
-        --model_path /home/bo.li/data/SkillRL/skillrl_models/customer_service/step_210 \
+        --model_path ~/data/SkillRL/skillrl_models/customer_service/step_210 \
         --playbook_path outputs/playbooks_all_fixed_v2.json \
         --output_path outputs/eval_step_210.json \
         --max_steps 20 \

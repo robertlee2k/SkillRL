@@ -14,7 +14,7 @@ Dimensions:
 
 Usage:
     python scripts/audit_content_quality.py \
-        --raw_data /home/bo.li/data/SkillRL/session_order_converted.json \
+        --raw_data ~/data/SkillRL/session_order_converted.json \
         --playbook_path outputs/playbooks_all_fixed_v2.json \
         --output_path outputs/content_audit_report.json
 """
@@ -317,7 +317,7 @@ def audit_single_content(pb: Dict, raw_session: Dict) -> Dict[str, Any]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw_data", default="/home/bo.li/data/SkillRL/session_order_converted.json")
+    parser.add_argument("--raw_data", default="~/data/SkillRL/session_order_converted.json")
     parser.add_argument("--playbook_path", default="outputs/playbooks_all_fixed_v2.json")
     parser.add_argument("--output_path", default="outputs/content_audit_report.json")
     args = parser.parse_args()
